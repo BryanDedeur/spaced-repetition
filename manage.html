@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manage Cards – Spaced Repetition</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    .card-row { cursor: pointer; }
+    .card-row .md-preview p:first-child { margin: 0; }
+    .table-wrapper { overflow-x: auto; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">Spaced Repetition</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="manage.html" class="active">Manage</a>
+      <a href="study.html">Study</a>
+    </div>
+    <div class="nav-right">
+      <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Flashcards</h2>
+      <div class="spacer"></div>
+      <button class="btn btn-sm btn-secondary" onclick="exportJson()">Export</button>
+      <button class="btn btn-sm btn-secondary" onclick="document.getElementById('importFileInput').click()">Import</button>
+      <input type="file" id="importFileInput" accept=".json" class="hidden" onchange="handleImportFile(event)">
+      <button class="btn btn-sm btn-secondary" onclick="refreshCards()" id="refreshBtn">Refresh</button>
+      <button class="btn btn-sm btn-primary" onclick="openCardModal()">+ New Card</button>
+    </div>
+
+    <div id="settingsBanner" class="banner banner-warning hidden">
+      GitHub repo not configured. <a href="javascript:void(0)" onclick="toggleSettingsModal()">Set up your connection</a> first.
+    </div>
+
+    <!-- Search / Filter -->
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Search cards..." oninput="renderCards()">
+    </div>
+    <div class="tag-filter-bar" id="tagFilterBar"></div>
+
+    <!-- Card Table -->
+    <div id="loadingState" class="loading-state hidden">
+      <div class="spinner"></div>
+      <span>Loading cards...</span>
+    </div>
+
+    <div id="emptyState" class="empty-state hidden">
+      <div class="empty-icon">&#x1F4AD;</div>
+      <p>No cards yet. Create your first flashcard!</p>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="data-table hidden" id="cardsTable">
+        <thead>
+          <tr>
+            <th>Front</th>
+            <th>Tags</th>
+            <th>Due</th>
+            <th>Interval</th>
+            <th class="cell-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="cardsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Card Edit Modal -->
+<div class="modal-overlay hidden" id="cardModal" onclick="if(event.target===this)closeCardModal()">
+  <div class="modal" style="max-width:650px">
+    <div class="modal-header">
+      <h3 id="cardModalTitle">New Card</h3>
+      <button class="modal-close" onclick="closeCardModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Front (Markdown)</label>
+        <textarea id="cardFrontInput" rows="4" placeholder="Question or prompt..."></textarea>
+      </div>
+      <div class="form-field">
+        <label>Back (Markdown)</label>
+        <textarea id="cardBackInput" rows="4" placeholder="Answer..."></textarea>
+      </div>
+      <div class="form-field">
+        <label>Tags <span class="text-muted" style="text-transform:none;letter-spacing:0">(comma-separated)</span></label>
+        <input type="text" id="cardTagsInput" placeholder="e.g. javascript, async, promises">
+      </div>
+
+      <!-- Live preview -->
+      <details style="margin-top:.5rem">
+        <summary style="font-size:.8rem;color:#888;cursor:pointer;margin-bottom:.5rem">Preview</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+          <div>
+            <div style="font-size:.7rem;color:#666;text-transform:uppercase;margin-bottom:.3rem">Front</div>
+            <div class="md-preview" id="previewFront" style="max-height:none;background:#222;padding:.6rem;border-radius:6px"></div>
+          </div>
+          <div>
+            <div style="font-size:.7rem;color:#666;text-transform:uppercase;margin-bottom:.3rem">Back</div>
+            <div class="md-preview" id="previewBack" style="max-height:none;background:#222;padding:.6rem;border-radius:6px"></div>
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger hidden" id="deleteCardBtn" onclick="deleteCard()">Delete</button>
+      <div class="spacer"></div>
+      <button class="btn btn-secondary" onclick="closeCardModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCard()" id="saveCardBtn">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import Preview Modal -->
+<div class="modal-overlay hidden" id="importModal" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-header">
+      <h3>Import Cards</h3>
+      <button class="modal-close" onclick="closeImportModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted" style="margin-bottom:.8rem;font-size:.85rem">
+        Preview of cards to import. Duplicates (matching front text) will be skipped.
+        Scheduling data is preserved when present.
+      </p>
+      <div id="importStats" style="margin-bottom:.8rem;font-size:.85rem"></div>
+      <div class="table-wrapper" style="max-height:300px;overflow-y:auto">
+        <table class="data-table" id="importPreviewTable">
+          <thead>
+            <tr>
+              <th>Front</th>
+              <th>Back</th>
+              <th>Tags</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="importPreviewBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="confirmImport()" id="importBtn">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay hidden" id="settingsModal" onclick="if(event.target===this)toggleSettingsModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>GitHub Repo Settings</h3>
+      <button class="modal-close" onclick="toggleSettingsModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted" style="margin-bottom:1rem;font-size:.85rem">
+        Your data is stored as a JSON file in a GitHub repository. Create a
+        <a href="https://github.com/settings/tokens/new?scopes=repo&description=Spaced+Repetition" target="_blank" style="color:#4a9eff">Personal Access Token</a>
+        with the <strong>repo</strong> scope.
+      </p>
+      <div class="form-field">
+        <label>GitHub Token</label>
+        <div style="position:relative">
+          <input type="password" id="ghTokenInput" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;padding-right:3rem">
+          <button class="btn-icon" onclick="toggleTokenVisibility()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%)" title="Toggle visibility" id="toggleVisBtn">&#x1F441;</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Owner</label>
+          <input type="text" id="repoOwnerInput" placeholder="e.g. my-username" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Repository</label>
+          <input type="text" id="repoNameInput" placeholder="e.g. my-flashcards" style="width:100%">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Branch</label>
+          <input type="text" id="repoBranchInput" placeholder="main" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>File Path</label>
+          <input type="text" id="repoPathInput" placeholder="spaced_repetition_data.json" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="clearSettings()">Clear</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Spaced Repetition &mdash; runs entirely in your browser
+</footer>
+
+<script src="shared.js"></script>
+<script>
+  var deckData = { cards: [] };
+  var editingCardId = null;
+  var activeTagFilters = [];
+
+  // --- Banner ---
+  function updateBanner() {
+    var banner = document.getElementById('settingsBanner');
+    var btn = document.getElementById('settingsBtn');
+    if (isConfigured()) {
+      banner.classList.add('hidden');
+      btn.textContent = 'Settings \u2713';
+      btn.classList.add('btn-configured');
+    } else {
+      banner.classList.remove('hidden');
+      btn.textContent = 'Settings';
+      btn.classList.remove('btn-configured');
+    }
+  }
+
+  // --- Load & Render ---
+  function refreshCards() {
+    var btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+    document.getElementById('loadingState').classList.remove('hidden');
+    document.getElementById('cardsTable').classList.add('hidden');
+    document.getElementById('emptyState').classList.add('hidden');
+
+    loadDeck().then(function (data) {
+      deckData = data;
+      if (!deckData.cards) deckData.cards = [];
+      renderTagFilter();
+      renderCards();
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+      document.getElementById('loadingState').classList.add('hidden');
+    }).catch(function (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+      document.getElementById('loadingState').classList.add('hidden');
+    });
+  }
+
+  function renderTagFilter() {
+    var tags = getAllTags(deckData.cards);
+    var bar = document.getElementById('tagFilterBar');
+    if (tags.length === 0) {
+      bar.innerHTML = '';
+      return;
+    }
+    var html = '<span class="filter-label">Filter:</span>';
+    tags.forEach(function (t) {
+      var sel = activeTagFilters.indexOf(t) >= 0 ? ' tag-selected' : '';
+      html += '<span class="tag-pill tag-clickable' + sel + '" onclick="toggleTagFilter(\'' + t.replace(/'/g, "\\'") + '\')">' + escHtml(t) + '</span>';
+    });
+    if (activeTagFilters.length > 0) {
+      html += ' <button class="btn-icon" onclick="clearTagFilter()" title="Clear filter" style="font-size:.75rem;color:#e55">clear</button>';
+    }
+    bar.innerHTML = html;
+  }
+
+  function toggleTagFilter(tag) {
+    var idx = activeTagFilters.indexOf(tag);
+    if (idx >= 0) {
+      activeTagFilters.splice(idx, 1);
+    } else {
+      activeTagFilters.push(tag);
+    }
+    renderTagFilter();
+    renderCards();
+  }
+
+  function clearTagFilter() {
+    activeTagFilters = [];
+    renderTagFilter();
+    renderCards();
+  }
+
+  function renderCards() {
+    var search = document.getElementById('searchInput').value.toLowerCase();
+    var cards = deckData.cards.filter(function (c) {
+      // Tag filter
+      if (activeTagFilters.length > 0) {
+        var hasTag = activeTagFilters.some(function (t) { return c.tags.indexOf(t) >= 0; });
+        if (!hasTag) return false;
+      }
+      // Search filter
+      if (search) {
+        var haystack = (c.front + ' ' + c.back + ' ' + c.tags.join(' ')).toLowerCase();
+        if (haystack.indexOf(search) < 0) return false;
+      }
+      return true;
+    });
+
+    var table = document.getElementById('cardsTable');
+    var empty = document.getElementById('emptyState');
+    var body = document.getElementById('cardsBody');
+
+    if (cards.length === 0) {
+      table.classList.add('hidden');
+      empty.classList.remove('hidden');
+      return;
+    }
+
+    empty.classList.add('hidden');
+    table.classList.remove('hidden');
+
+    // Sort: due soonest first
+    cards.sort(function (a, b) { return new Date(a.due) - new Date(b.due); });
+
+    var html = '';
+    cards.forEach(function (c) {
+      var dueDate = new Date(c.due);
+      var now = new Date();
+      var dueStr, dueClass;
+      if (isNew(c)) {
+        dueStr = 'New';
+        dueClass = 'badge-blue';
+      } else if (dueDate <= now) {
+        dueStr = 'Due';
+        dueClass = 'badge-orange';
+      } else {
+        dueStr = dueDate.toLocaleDateString();
+        dueClass = 'badge-green';
+      }
+
+      var tagsHtml = c.tags.map(function (t) {
+        return '<span class="tag-pill">' + escHtml(t) + '</span>';
+      }).join(' ');
+
+      html += '<tr class="card-row" onclick="openCardModal(\'' + c.id + '\')">' +
+        '<td><div class="md-preview">' + renderMarkdown(c.front) + '</div></td>' +
+        '<td>' + tagsHtml + '</td>' +
+        '<td><span class="badge ' + dueClass + '">' + dueStr + '</span></td>' +
+        '<td>' + (c.interval > 0 ? formatInterval(c.interval) : '—') + '</td>' +
+        '<td class="cell-actions">' +
+          '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();openCardModal(\'' + c.id + '\')">Edit</button>' +
+        '</td>' +
+      '</tr>';
+    });
+
+    body.innerHTML = html;
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // --- Card Modal ---
+
+  function openCardModal(cardId) {
+    editingCardId = cardId || null;
+    var modal = document.getElementById('cardModal');
+    var title = document.getElementById('cardModalTitle');
+    var frontInput = document.getElementById('cardFrontInput');
+    var backInput = document.getElementById('cardBackInput');
+    var tagsInput = document.getElementById('cardTagsInput');
+    var deleteBtn = document.getElementById('deleteCardBtn');
+    var saveBtn = document.getElementById('saveCardBtn');
+
+    if (editingCardId) {
+      var card = deckData.cards.find(function (c) { return c.id === editingCardId; });
+      if (!card) return;
+      title.textContent = 'Edit Card';
+      frontInput.value = card.front;
+      backInput.value = card.back;
+      tagsInput.value = card.tags.join(', ');
+      deleteBtn.classList.remove('hidden');
+      saveBtn.textContent = 'Update';
+    } else {
+      title.textContent = 'New Card';
+      frontInput.value = '';
+      backInput.value = '';
+      tagsInput.value = '';
+      deleteBtn.classList.add('hidden');
+      saveBtn.textContent = 'Create';
+    }
+
+    updatePreview();
+    modal.classList.remove('hidden');
+    frontInput.focus();
+  }
+
+  function closeCardModal() {
+    document.getElementById('cardModal').classList.add('hidden');
+    editingCardId = null;
+  }
+
+  function updatePreview() {
+    document.getElementById('previewFront').innerHTML = renderMarkdown(document.getElementById('cardFrontInput').value);
+    document.getElementById('previewBack').innerHTML = renderMarkdown(document.getElementById('cardBackInput').value);
+  }
+
+  document.getElementById('cardFrontInput').addEventListener('input', updatePreview);
+  document.getElementById('cardBackInput').addEventListener('input', updatePreview);
+
+  function parseTags(str) {
+    return str.split(',').map(function (t) { return t.trim(); }).filter(function (t) { return t.length > 0; });
+  }
+
+  function saveCard() {
+    var front = document.getElementById('cardFrontInput').value.trim();
+    var back = document.getElementById('cardBackInput').value.trim();
+    var tags = parseTags(document.getElementById('cardTagsInput').value);
+
+    if (!front) {
+      showToast('Front side is required', 'error');
+      return;
+    }
+
+    var btn = document.getElementById('saveCardBtn');
+    btn.disabled = true;
+
+    if (editingCardId) {
+      var card = deckData.cards.find(function (c) { return c.id === editingCardId; });
+      if (card) {
+        card.front = front;
+        card.back = back;
+        card.tags = tags;
+      }
+    } else {
+      deckData.cards.push(createCard(front, back, tags));
+    }
+
+    saveDeck(deckData).then(function () {
+      btn.disabled = false;
+      closeCardModal();
+      renderTagFilter();
+      renderCards();
+      showToast(editingCardId ? 'Card updated' : 'Card created', 'success');
+    }).catch(function (err) {
+      btn.disabled = false;
+      showToast(err.message, 'error');
+    });
+  }
+
+  function deleteCard() {
+    if (!editingCardId) return;
+    if (!confirm('Delete this card?')) return;
+
+    deckData.cards = deckData.cards.filter(function (c) { return c.id !== editingCardId; });
+
+    saveDeck(deckData).then(function () {
+      closeCardModal();
+      renderTagFilter();
+      renderCards();
+      showToast('Card deleted', 'success');
+    }).catch(function (err) {
+      showToast(err.message, 'error');
+    });
+  }
+
+  // --- JSON Export / Import ---
+
+  function exportJson() {
+    var cards = deckData.cards;
+    if (cards.length === 0) {
+      showToast('No cards to export', 'error');
+      return;
+    }
+
+    var blob = new Blob([JSON.stringify({ cards: cards }, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'flashcards_' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported ' + cards.length + ' cards', 'success');
+  }
+
+  var pendingImportCards = [];
+
+  function handleImportFile(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    event.target.value = '';
+
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var parsed;
+      try {
+        parsed = JSON.parse(e.target.result);
+      } catch (err) {
+        showToast('Invalid JSON file', 'error');
+        return;
+      }
+
+      // Accept either { cards: [...] } or a raw array
+      var incoming = Array.isArray(parsed) ? parsed : (parsed.cards || []);
+      if (incoming.length === 0) {
+        showToast('No cards found in file', 'error');
+        return;
+      }
+
+      var existingFronts = {};
+      deckData.cards.forEach(function (c) { existingFronts[c.front.trim()] = true; });
+
+      pendingImportCards = [];
+      var dupeCount = 0;
+
+      incoming.forEach(function (c) {
+        var front = (c.front || '').trim();
+        if (!front) return;
+
+        var isDupe = existingFronts[front] || false;
+        if (isDupe) dupeCount++;
+
+        pendingImportCards.push({
+          front: front,
+          back: (c.back || '').trim(),
+          tags: Array.isArray(c.tags) ? c.tags : [],
+          // Preserve scheduling data if present
+          interval: c.interval || 0,
+          repetitions: c.repetitions || 0,
+          easeFactor: c.easeFactor || 2.5,
+          due: c.due || null,
+          lastReview: c.lastReview || null,
+          hasScheduling: !!(c.lastReview || c.repetitions > 0),
+          duplicate: isDupe
+        });
+      });
+
+      // Show preview modal
+      var newCount = pendingImportCards.filter(function (c) { return !c.duplicate; }).length;
+      var withScheduling = pendingImportCards.filter(function (c) { return !c.duplicate && c.hasScheduling; }).length;
+
+      var statsHtml = '<strong>' + pendingImportCards.length + '</strong> cards parsed, ' +
+        '<strong>' + newCount + '</strong> new, ' +
+        '<span style="color:#888">' + dupeCount + ' duplicates (skipped)</span>';
+      if (withScheduling > 0) {
+        statsHtml += '<br><span style="color:#2ecc71">' + withScheduling + ' with scheduling data preserved</span>';
+      }
+      document.getElementById('importStats').innerHTML = statsHtml;
+
+      var tbody = document.getElementById('importPreviewBody');
+      var html = '';
+      pendingImportCards.forEach(function (c) {
+        var statusBadge = c.duplicate
+          ? '<span class="badge badge-gray">Duplicate</span>'
+          : c.hasScheduling
+            ? '<span class="badge badge-green">Restore</span>'
+            : '<span class="badge badge-blue">New</span>';
+        var tagsHtml = c.tags.map(function (t) { return '<span class="tag-pill">' + escHtml(t) + '</span>'; }).join(' ');
+        html += '<tr style="' + (c.duplicate ? 'opacity:.5' : '') + '">' +
+          '<td><div class="md-preview">' + escHtml(c.front.substring(0, 80)) + (c.front.length > 80 ? '...' : '') + '</div></td>' +
+          '<td><div class="md-preview">' + escHtml(c.back.substring(0, 80)) + (c.back.length > 80 ? '...' : '') + '</div></td>' +
+          '<td>' + tagsHtml + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+        '</tr>';
+      });
+      tbody.innerHTML = html;
+
+      document.getElementById('importBtn').disabled = newCount === 0;
+      document.getElementById('importBtn').textContent = 'Import ' + newCount + ' Cards';
+      document.getElementById('importModal').classList.remove('hidden');
+    };
+    reader.readAsText(file);
+  }
+
+  function closeImportModal() {
+    document.getElementById('importModal').classList.add('hidden');
+    pendingImportCards = [];
+  }
+
+  function confirmImport() {
+    var btn = document.getElementById('importBtn');
+    btn.disabled = true;
+    btn.textContent = 'Importing...';
+
+    var newCards = pendingImportCards.filter(function (c) { return !c.duplicate; });
+    newCards.forEach(function (c) {
+      var card = createCard(c.front, c.back, c.tags);
+      // Restore scheduling data if present
+      if (c.hasScheduling) {
+        card.interval = c.interval;
+        card.repetitions = c.repetitions;
+        card.easeFactor = c.easeFactor;
+        card.due = c.due;
+        card.lastReview = c.lastReview;
+      }
+      deckData.cards.push(card);
+    });
+
+    saveDeck(deckData).then(function () {
+      closeImportModal();
+      renderTagFilter();
+      renderCards();
+      showToast('Imported ' + newCards.length + ' cards', 'success');
+    }).catch(function (err) {
+      btn.disabled = false;
+      btn.textContent = 'Import';
+      showToast(err.message, 'error');
+    });
+  }
+
+  function onSettingsChanged() {
+    updateBanner();
+    refreshCards();
+  }
+
+  // Escape key for card modal
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      var im = document.getElementById('importModal');
+      if (im && !im.classList.contains('hidden')) {
+        closeImportModal();
+        return;
+      }
+      var cm = document.getElementById('cardModal');
+      if (cm && !cm.classList.contains('hidden')) {
+        closeCardModal();
+      }
+    }
+  });
+
+  // --- Init ---
+  updateBanner();
+  if (isConfigured()) {
+    refreshCards();
+  }
+</script>
+</body>
+</html>

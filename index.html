@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spaced Repetition</title>
+  <link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">Spaced Repetition</a>
+    <div class="nav-links">
+      <a href="index.html" class="active">Home</a>
+      <a href="manage.html">Manage</a>
+      <a href="study.html">Study</a>
+    </div>
+    <div class="nav-right">
+      <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <div style="text-align:center;padding:2.5rem 1rem 1.5rem">
+    <h1 style="font-size:2rem;font-weight:700;color:#fff">Spaced Repetition</h1>
+    <p style="color:#888;margin-top:.5rem">Flashcard study with Anki-style scheduling, backed by a GitHub repo</p>
+  </div>
+
+  <div id="settingsBanner" class="banner banner-warning hidden">
+    GitHub repo not configured. <a href="javascript:void(0)" onclick="toggleSettingsModal()">Set up your connection</a> to get started.
+  </div>
+
+  <div id="statsSection" class="hidden">
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card">
+        <div class="stat-value" id="statTotal">0</div>
+        <div class="stat-label">Total Cards</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statDue" style="color:#e8c840">0</div>
+        <div class="stat-label">Due Now</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statNew" style="color:#4a9eff">0</div>
+        <div class="stat-label">New Cards</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statMastered" style="color:#2ecc71">0</div>
+        <div class="stat-label">Mastered (21d+)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tools-grid">
+    <a href="manage.html" class="tool-card">
+      <div class="tool-icon">&#x1F4DD;</div>
+      <h3>Manage Cards</h3>
+      <p>Create, edit, and organize your flashcards. Add markdown content and tags.</p>
+      <span class="tool-tag">CRUD</span>
+    </a>
+
+    <a href="study.html" class="tool-card">
+      <div class="tool-icon">&#x1F4DA;</div>
+      <h3>Study Session</h3>
+      <p>Review due cards with spaced repetition scheduling. Filter by tags.</p>
+      <span class="tool-tag">SM-2 Algorithm</span>
+    </a>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay hidden" id="settingsModal" onclick="if(event.target===this)toggleSettingsModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>GitHub Repo Settings</h3>
+      <button class="modal-close" onclick="toggleSettingsModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted" style="margin-bottom:1rem;font-size:.85rem">
+        Your data is stored as a JSON file in a GitHub repository. Create a
+        <a href="https://github.com/settings/tokens/new?scopes=repo&description=Spaced+Repetition" target="_blank" style="color:#4a9eff">Personal Access Token</a>
+        with the <strong>repo</strong> scope. Your token is stored only in this browser's local storage.
+      </p>
+      <div class="form-field">
+        <label>GitHub Token</label>
+        <div style="position:relative">
+          <input type="password" id="ghTokenInput" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;padding-right:3rem">
+          <button class="btn-icon" onclick="toggleTokenVisibility()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%)" title="Toggle visibility" id="toggleVisBtn">&#x1F441;</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Owner</label>
+          <input type="text" id="repoOwnerInput" placeholder="e.g. my-username" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Repository</label>
+          <input type="text" id="repoNameInput" placeholder="e.g. my-flashcards" style="width:100%">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Branch</label>
+          <input type="text" id="repoBranchInput" placeholder="main" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>File Path</label>
+          <input type="text" id="repoPathInput" placeholder="spaced_repetition_data.json" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="clearSettings()">Clear</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Spaced Repetition &mdash; runs entirely in your browser &mdash; data stored in GitHub
+</footer>
+
+<script src="shared.js"></script>
+<script>
+  function updateBanner() {
+    var banner = document.getElementById('settingsBanner');
+    var btn = document.getElementById('settingsBtn');
+    if (isConfigured()) {
+      banner.classList.add('hidden');
+      btn.textContent = 'Settings \u2713';
+      btn.classList.add('btn-configured');
+      loadStats();
+    } else {
+      banner.classList.remove('hidden');
+      btn.textContent = 'Settings';
+      btn.classList.remove('btn-configured');
+      document.getElementById('statsSection').classList.add('hidden');
+    }
+  }
+
+  function loadStats() {
+    loadDeck().then(function (data) {
+      var cards = data.cards || [];
+      var now = new Date();
+      var due = 0, newCount = 0, mastered = 0;
+      cards.forEach(function (c) {
+        if (isNew(c)) newCount++;
+        if (isDue(c)) due++;
+        if (c.interval >= 21) mastered++;
+      });
+
+      document.getElementById('statTotal').textContent = cards.length;
+      document.getElementById('statDue').textContent = due;
+      document.getElementById('statNew').textContent = newCount;
+      document.getElementById('statMastered').textContent = mastered;
+      document.getElementById('statsSection').classList.remove('hidden');
+    }).catch(function (err) {
+      console.error('Failed to load stats:', err);
+    });
+  }
+
+  function onSettingsChanged() {
+    updateBanner();
+  }
+
+  updateBanner();
+</script>
+</body>
+</html>

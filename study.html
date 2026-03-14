@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study – Spaced Repetition</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    .study-progress {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      font-size: .85rem;
+      color: #888;
+    }
+    .study-progress .progress-bar {
+      flex: 1;
+      height: 6px;
+      background: #282828;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .study-progress .progress-fill {
+      height: 100%;
+      background: #4a9eff;
+      border-radius: 3px;
+      transition: width .3s;
+    }
+    .study-hint {
+      text-align: center;
+      font-size: .8rem;
+      color: #555;
+      margin-top: .5rem;
+    }
+    .session-setup {
+      max-width: 500px;
+      margin: 0 auto;
+    }
+    .tag-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      margin-top: .5rem;
+    }
+    .tag-grid .tag-pill {
+      font-size: .82rem;
+      padding: .3rem .6rem;
+      cursor: pointer;
+    }
+    .session-complete {
+      text-align: center;
+      padding: 3rem 1rem;
+    }
+    .session-complete .complete-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+    .session-complete h2 {
+      color: #fff;
+      margin-bottom: .5rem;
+    }
+    .session-complete p {
+      color: #888;
+    }
+    .session-stats {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      margin-top: 1.5rem;
+    }
+    .session-stats .stat {
+      text-align: center;
+    }
+    .session-stats .stat-val {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .session-stats .stat-lbl {
+      font-size: .75rem;
+      color: #888;
+      margin-top: .2rem;
+    }
+    .card-tags-row {
+      display: flex;
+      justify-content: center;
+      gap: .3rem;
+      margin-top: .8rem;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">Spaced Repetition</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="manage.html">Manage</a>
+      <a href="study.html" class="active">Study</a>
+    </div>
+    <div class="nav-right">
+      <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <!-- Session Setup -->
+  <div id="setupView">
+    <div class="session-setup">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Start Study Session</h2>
+        </div>
+
+        <div id="settingsBanner" class="banner banner-warning hidden">
+          <a href="javascript:void(0)" onclick="toggleSettingsModal()">Configure repo settings</a> to begin studying.
+        </div>
+
+        <div id="setupLoading" class="loading-state hidden">
+          <div class="spinner"></div>
+          <span>Loading deck...</span>
+        </div>
+
+        <div id="setupContent" class="hidden">
+          <div id="setupStats" style="margin-bottom:1rem;font-size:.9rem;color:#ccc"></div>
+
+          <div class="form-field">
+            <label>Focus Tags <span class="text-muted" style="text-transform:none;letter-spacing:0">(click to select, or leave blank for all)</span></label>
+            <div class="tag-grid" id="tagGrid"></div>
+            <div id="noTagsMsg" class="text-muted" style="font-size:.8rem;margin-top:.3rem"></div>
+          </div>
+
+          <div style="margin-top:1rem;display:flex;gap:.5rem">
+            <button class="btn btn-primary" onclick="startSession()" id="startBtn" style="flex:1">Start Studying</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Study View -->
+  <div id="studyView" class="hidden">
+    <div class="study-progress">
+      <span id="progressText">0 / 0</span>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+      </div>
+      <button class="btn btn-sm btn-secondary" onclick="endSession()">End</button>
+    </div>
+
+    <div class="study-card" id="studyCard" onclick="revealAnswer()">
+      <div class="card-label" id="cardLabel">FRONT</div>
+      <div class="card-content" id="cardContent"></div>
+      <div class="card-tags-row" id="cardTags"></div>
+
+      <!-- Answer (hidden by default) -->
+      <hr class="card-divider hidden" id="cardDivider">
+      <div class="card-label hidden" id="backLabel">BACK</div>
+      <div class="card-content hidden" id="backContent"></div>
+    </div>
+
+    <div id="revealHint" class="study-hint">Click card or press Space to reveal answer</div>
+
+    <div id="ratingSection" class="hidden">
+      <div class="rating-buttons" id="ratingButtons"></div>
+      <div class="study-hint" style="margin-top:.6rem">Keyboard: 1 = Again, 2 = Hard, 3 = Good, 4 = Easy</div>
+    </div>
+  </div>
+
+  <!-- Session Complete -->
+  <div id="completeView" class="hidden">
+    <div class="session-complete">
+      <div class="complete-icon">&#x1F389;</div>
+      <h2>Session Complete!</h2>
+      <p>Great work! You've reviewed all due cards.</p>
+      <div class="session-stats">
+        <div class="stat">
+          <div class="stat-val" id="compReviewed">0</div>
+          <div class="stat-lbl">Reviewed</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="compAgain" style="color:#e55">0</div>
+          <div class="stat-lbl">Again</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="compGood" style="color:#2ecc71">0</div>
+          <div class="stat-lbl">Good+</div>
+        </div>
+      </div>
+      <div style="margin-top:2rem;display:flex;gap:.5rem;justify-content:center">
+        <button class="btn btn-secondary" onclick="location.href='manage.html'">Manage Cards</button>
+        <button class="btn btn-primary" onclick="resetToSetup()">Study Again</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay hidden" id="settingsModal" onclick="if(event.target===this)toggleSettingsModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>GitHub Repo Settings</h3>
+      <button class="modal-close" onclick="toggleSettingsModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted" style="margin-bottom:1rem;font-size:.85rem">
+        Create a
+        <a href="https://github.com/settings/tokens/new?scopes=repo&description=Spaced+Repetition" target="_blank" style="color:#4a9eff">Personal Access Token</a>
+        with the <strong>repo</strong> scope.
+      </p>
+      <div class="form-field">
+        <label>GitHub Token</label>
+        <div style="position:relative">
+          <input type="password" id="ghTokenInput" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;padding-right:3rem">
+          <button class="btn-icon" onclick="toggleTokenVisibility()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%)" title="Toggle visibility" id="toggleVisBtn">&#x1F441;</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Owner</label>
+          <input type="text" id="repoOwnerInput" placeholder="e.g. my-username" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Repository</label>
+          <input type="text" id="repoNameInput" placeholder="e.g. my-flashcards" style="width:100%">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Branch</label>
+          <input type="text" id="repoBranchInput" placeholder="main" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>File Path</label>
+          <input type="text" id="repoPathInput" placeholder="spaced_repetition_data.json" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="clearSettings()">Clear</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Spaced Repetition &mdash; runs entirely in your browser
+</footer>
+
+<script src="shared.js"></script>
+<script>
+  var deckData = { cards: [] };
+  var sessionCards = [];    // cards to review this session
+  var currentIndex = 0;
+  var answerRevealed = false;
+  var selectedTags = [];
+  var sessionStats = { reviewed: 0, again: 0, good: 0 };
+
+  // --- Banner ---
+  function updateBanner() {
+    var banner = document.getElementById('settingsBanner');
+    var btn = document.getElementById('settingsBtn');
+    if (isConfigured()) {
+      banner.classList.add('hidden');
+      btn.textContent = 'Settings \u2713';
+      btn.classList.add('btn-configured');
+    } else {
+      banner.classList.remove('hidden');
+      btn.textContent = 'Settings';
+      btn.classList.remove('btn-configured');
+    }
+  }
+
+  // --- Setup ---
+  function loadSetup() {
+    if (!isConfigured()) return;
+
+    document.getElementById('setupLoading').classList.remove('hidden');
+    document.getElementById('setupContent').classList.add('hidden');
+
+    loadDeck().then(function (data) {
+      deckData = data;
+      if (!deckData.cards) deckData.cards = [];
+      document.getElementById('setupLoading').classList.add('hidden');
+      document.getElementById('setupContent').classList.remove('hidden');
+      renderSetup();
+    }).catch(function (err) {
+      document.getElementById('setupLoading').classList.add('hidden');
+      showToast(err.message, 'error');
+    });
+  }
+
+  function renderSetup() {
+    var cards = deckData.cards;
+    var dueCards = getDueCards(cards, []);
+    var newCards = cards.filter(function (c) { return isNew(c); });
+
+    document.getElementById('setupStats').innerHTML =
+      '<strong>' + dueCards.length + '</strong> cards due' +
+      (newCards.length > 0 ? ' (<strong>' + newCards.length + '</strong> new)' : '') +
+      ' out of <strong>' + cards.length + '</strong> total';
+
+    var tags = getAllTags(cards);
+    var grid = document.getElementById('tagGrid');
+    var noMsg = document.getElementById('noTagsMsg');
+
+    if (tags.length === 0) {
+      grid.innerHTML = '';
+      noMsg.textContent = 'No tags found. All cards will be included.';
+    } else {
+      noMsg.textContent = '';
+      grid.innerHTML = tags.map(function (t) {
+        var count = cards.filter(function (c) { return c.tags.indexOf(t) >= 0 && isDue(c); }).length;
+        var sel = selectedTags.indexOf(t) >= 0 ? ' tag-selected' : '';
+        return '<span class="tag-pill tag-clickable' + sel + '" onclick="toggleStudyTag(\'' + t.replace(/'/g, "\\'") + '\')">' +
+          escHtml(t) + ' <span class="text-muted">(' + count + ')</span></span>';
+      }).join('');
+    }
+
+    var dueFiltered = getDueCards(cards, selectedTags.length > 0 ? selectedTags : null);
+    document.getElementById('startBtn').textContent = 'Start Studying (' + dueFiltered.length + ' cards)';
+    document.getElementById('startBtn').disabled = dueFiltered.length === 0;
+  }
+
+  function toggleStudyTag(tag) {
+    var idx = selectedTags.indexOf(tag);
+    if (idx >= 0) {
+      selectedTags.splice(idx, 1);
+    } else {
+      selectedTags.push(tag);
+    }
+    renderSetup();
+  }
+
+  // --- Session ---
+  function startSession() {
+    var tagFilter = selectedTags.length > 0 ? selectedTags : null;
+    sessionCards = getDueCards(deckData.cards, tagFilter);
+
+    // Shuffle
+    for (var i = sessionCards.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = sessionCards[i];
+      sessionCards[i] = sessionCards[j];
+      sessionCards[j] = tmp;
+    }
+
+    currentIndex = 0;
+    answerRevealed = false;
+    sessionStats = { reviewed: 0, again: 0, good: 0 };
+
+    document.getElementById('setupView').classList.add('hidden');
+    document.getElementById('studyView').classList.remove('hidden');
+    document.getElementById('completeView').classList.add('hidden');
+
+    showCurrentCard();
+  }
+
+  function showCurrentCard() {
+    if (currentIndex >= sessionCards.length) {
+      finishSession();
+      return;
+    }
+
+    var card = sessionCards[currentIndex];
+    answerRevealed = false;
+
+    // Progress
+    document.getElementById('progressText').textContent = (currentIndex + 1) + ' / ' + sessionCards.length;
+    var pct = sessionCards.length > 0 ? ((currentIndex) / sessionCards.length * 100) : 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+
+    // Front
+    document.getElementById('cardLabel').textContent = 'FRONT';
+    document.getElementById('cardContent').innerHTML = renderMarkdown(card.front);
+
+    // Tags
+    var tagsHtml = (card.tags || []).map(function (t) {
+      return '<span class="tag-pill">' + escHtml(t) + '</span>';
+    }).join('');
+    document.getElementById('cardTags').innerHTML = tagsHtml;
+
+    // Hide back
+    document.getElementById('cardDivider').classList.add('hidden');
+    document.getElementById('backLabel').classList.add('hidden');
+    document.getElementById('backContent').classList.add('hidden');
+
+    // Show hint, hide rating
+    document.getElementById('revealHint').classList.remove('hidden');
+    document.getElementById('ratingSection').classList.add('hidden');
+  }
+
+  function revealAnswer() {
+    if (answerRevealed) return;
+    answerRevealed = true;
+
+    var card = sessionCards[currentIndex];
+
+    // Show back
+    document.getElementById('cardDivider').classList.remove('hidden');
+    document.getElementById('backLabel').classList.remove('hidden');
+    document.getElementById('backLabel').textContent = 'BACK';
+    document.getElementById('backContent').classList.remove('hidden');
+    document.getElementById('backContent').innerHTML = renderMarkdown(card.back);
+
+    // Hide hint, show rating
+    document.getElementById('revealHint').classList.add('hidden');
+    document.getElementById('ratingSection').classList.remove('hidden');
+
+    // Render rating buttons with interval previews
+    var previews = previewIntervals(card);
+    var labels = ['Again', 'Hard', 'Good', 'Easy'];
+    var colors = ['btn-danger', 'btn-warning', 'btn-success', 'btn-primary'];
+
+    var html = '';
+    for (var i = 0; i < 4; i++) {
+      html += '<button class="btn ' + colors[i] + '" onclick="rateCard(' + i + ')">' +
+        labels[i] +
+        '<span class="rating-interval">' + formatInterval(previews[i]) + '</span>' +
+      '</button>';
+    }
+    document.getElementById('ratingButtons').innerHTML = html;
+  }
+
+  function rateCard(quality) {
+    var card = sessionCards[currentIndex];
+    var result = sm2(card, quality);
+
+    // Update card in deckData
+    var deckCard = deckData.cards.find(function (c) { return c.id === card.id; });
+    if (deckCard) {
+      deckCard.interval = result.interval;
+      deckCard.repetitions = result.repetitions;
+      deckCard.easeFactor = result.easeFactor;
+      deckCard.due = result.due;
+      deckCard.lastReview = result.lastReview;
+    }
+
+    // Also update session card reference
+    card.interval = result.interval;
+    card.repetitions = result.repetitions;
+    card.easeFactor = result.easeFactor;
+    card.due = result.due;
+    card.lastReview = result.lastReview;
+
+    // Track stats
+    sessionStats.reviewed++;
+    if (quality === 0) {
+      sessionStats.again++;
+      // Re-add "Again" cards to the end of the queue
+      sessionCards.push(card);
+    } else {
+      sessionStats.good++;
+    }
+
+    // Save to gist (fire-and-forget, don't block UI)
+    saveDeck(deckData).catch(function (err) {
+      console.error('Save failed:', err);
+      showToast('Failed to save — will retry on next action', 'error');
+    });
+
+    // Next card
+    currentIndex++;
+    showCurrentCard();
+  }
+
+  function finishSession() {
+    document.getElementById('studyView').classList.add('hidden');
+    document.getElementById('completeView').classList.remove('hidden');
+
+    document.getElementById('compReviewed').textContent = sessionStats.reviewed;
+    document.getElementById('compAgain').textContent = sessionStats.again;
+    document.getElementById('compGood').textContent = sessionStats.good;
+  }
+
+  function endSession() {
+    if (sessionStats.reviewed > 0 && !confirm('End session early? Progress is already saved.')) return;
+    finishSession();
+  }
+
+  function resetToSetup() {
+    document.getElementById('setupView').classList.remove('hidden');
+    document.getElementById('studyView').classList.add('hidden');
+    document.getElementById('completeView').classList.add('hidden');
+    selectedTags = [];
+    loadSetup();
+  }
+
+  // --- Keyboard ---
+  document.addEventListener('keydown', function (e) {
+    // Don't handle if modals are open or setup is visible
+    if (!document.getElementById('studyView').classList.contains('hidden')) {
+      if (e.code === 'Space' && !answerRevealed) {
+        e.preventDefault();
+        revealAnswer();
+      } else if (answerRevealed) {
+        if (e.key === '1') rateCard(0);
+        else if (e.key === '2') rateCard(1);
+        else if (e.key === '3') rateCard(2);
+        else if (e.key === '4') rateCard(3);
+      }
+    }
+  });
+
+  function escHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function onSettingsChanged() {
+    updateBanner();
+    loadSetup();
+  }
+
+  // --- Init ---
+  updateBanner();
+  loadSetup();
+</script>
+</body>
+</html>
