@@ -168,7 +168,7 @@ function loadDeck() {
     }
     _fileSha = data.sha;
     try {
-      var content = atob(data.content.replace(/\n/g, ''));
+      var content = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
       return JSON.parse(content);
     } catch (e) {
       return { cards: [] };
