@@ -459,11 +459,8 @@
       sessionStats.good++;
     }
 
-    // Save to gist (fire-and-forget, don't block UI)
-    saveDeck(deckData).catch(function (err) {
-      console.error('Save failed:', err);
-      showToast('Failed to save — will retry on next action', 'error');
-    });
+    // Schedule batched save (coalesces rapid ratings into fewer commits)
+    scheduleSave(deckData);
 
     // Next card
     currentIndex++;
@@ -471,6 +468,9 @@
   }
 
   function finishSession() {
+    // Flush any pending batched saves before showing completion
+    flushSave();
+
     document.getElementById('studyView').classList.add('hidden');
     document.getElementById('completeView').classList.remove('hidden');
 
@@ -480,7 +480,7 @@
   }
 
   function endSession() {
-    if (sessionStats.reviewed > 0 && !confirm('End session early? Progress is already saved.')) return;
+    if (sessionStats.reviewed > 0 && !confirm('End session early? Progress will be saved.')) return;
     finishSession();
   }
 

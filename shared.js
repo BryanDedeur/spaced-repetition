@@ -204,6 +204,61 @@ function saveDeck(data) {
   });
 }
 
+// --- Batched / Debounced Save ---
+// Coalesces rapid saves into a single commit. Use scheduleSave() for
+// fire-and-forget scenarios (e.g. card ratings) and flushSave() when
+// you need to guarantee the save completes (e.g. session end).
+
+var _saveDirty = false;
+var _saveTimer = null;
+var _pendingData = null;
+var _SAVE_DEBOUNCE_MS = 2 * 60 * 1000; // 2 minutes
+
+function scheduleSave(data) {
+  _pendingData = data;
+  _saveDirty = true;
+
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(function () {
+    _flushSaveInternal();
+  }, _SAVE_DEBOUNCE_MS);
+}
+
+function flushSave() {
+  if (!_saveDirty) return Promise.resolve();
+  return _flushSaveInternal();
+}
+
+function _flushSaveInternal() {
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+  if (!_saveDirty || !_pendingData) return Promise.resolve();
+
+  _saveDirty = false;
+  var data = _pendingData;
+
+  return saveDeck(data).catch(function (err) {
+    // Re-mark dirty so next flush retries
+    _saveDirty = true;
+    _pendingData = data;
+    console.error('Batched save failed:', err);
+    showToast('Failed to save — will retry', 'error');
+  });
+}
+
+// Flush pending saves when leaving / hiding the page
+window.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'hidden') {
+    flushSave();
+  }
+});
+
+window.addEventListener('beforeunload', function () {
+  flushSave();
+});
+
 // --- Card helpers ---
 
 function generateId() {
