@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tag Graph &mdash; Spaced Repetition</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    /* Make the graph fill the viewport below the nav */
+    body { overflow: hidden; }
+
+    .graph-wrap {
+      position: fixed;
+      top: 48px; /* below sticky nav */
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background:
+        radial-gradient(circle at 50% 50%, #161616 0%, #0b0b0b 80%);
+    }
+
+    #graphCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    #graphCanvas.grabbing { cursor: grabbing; }
+    #graphCanvas.dragging-node { cursor: pointer; }
+
+    .graph-overlay {
+      position: absolute;
+      top: .75rem;
+      left: .75rem;
+      background: rgba(20,20,20,.85);
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: .6rem .8rem;
+      font-size: .8rem;
+      color: #bbb;
+      backdrop-filter: blur(6px);
+      max-width: 280px;
+    }
+
+    .graph-overlay h4 {
+      font-size: .75rem;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: .4rem;
+    }
+
+    .graph-overlay .stat-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: .75rem;
+      color: #888;
+    }
+    .graph-overlay .stat-line strong { color: #e0e0e0; font-weight: 600; }
+
+    .graph-controls {
+      position: absolute;
+      top: .75rem;
+      right: .75rem;
+      display: flex;
+      flex-direction: column;
+      gap: .4rem;
+      background: rgba(20,20,20,.85);
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: .6rem;
+      backdrop-filter: blur(6px);
+    }
+
+    .graph-controls .control-row {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .72rem;
+      color: #888;
+    }
+    .graph-controls .control-row label {
+      min-width: 70px;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .graph-controls input[type=range] {
+      flex: 1;
+      width: 130px;
+      accent-color: #4a9eff;
+    }
+
+    .graph-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(20,20,20,.95);
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: .4rem .6rem;
+      font-size: .8rem;
+      color: #e0e0e0;
+      white-space: nowrap;
+      transform: translate(-50%, calc(-100% - 8px));
+      opacity: 0;
+      transition: opacity .12s;
+      z-index: 10;
+    }
+    .graph-tooltip.visible { opacity: 1; }
+    .graph-tooltip .tt-count {
+      color: #888;
+      font-size: .72rem;
+      margin-left: .4rem;
+    }
+
+    .graph-empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: .5rem;
+      color: #555;
+      text-align: center;
+      padding: 2rem;
+    }
+    .graph-empty .empty-icon { font-size: 2.5rem; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">Spaced Repetition</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="manage.html">Manage</a>
+      <a href="study.html">Study</a>
+      <a href="graph.html" class="active">Graph</a>
+      <a href="stats.html">Stats</a>
+    </div>
+    <div class="nav-right">
+      <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
+    </div>
+  </div>
+</nav>
+
+<div class="graph-wrap" id="graphWrap">
+  <canvas id="graphCanvas"></canvas>
+
+  <div class="graph-overlay" id="graphOverlay">
+    <h4>Tag Graph</h4>
+    <div class="stat-line"><span>Tags</span><strong id="statTags">0</strong></div>
+    <div class="stat-line"><span>Connections</span><strong id="statLinks">0</strong></div>
+    <div class="stat-line"><span>Cards</span><strong id="statCards">0</strong></div>
+    <div style="margin-top:.5rem;font-size:.7rem;color:#666">
+      Click a node to focus &middot; Drag to move &middot; Scroll to zoom &middot; Esc clears
+    </div>
+  </div>
+
+  <div class="graph-controls">
+    <div class="control-row">
+      <label>Repulsion</label>
+      <input type="range" id="ctrlRepulsion" min="50" max="3000" step="50" value="800">
+    </div>
+    <div class="control-row">
+      <label>Link force</label>
+      <input type="range" id="ctrlLink" min="1" max="100" step="1" value="30">
+    </div>
+    <div class="control-row">
+      <label>Centering</label>
+      <input type="range" id="ctrlCenter" min="0" max="100" step="1" value="20">
+    </div>
+    <div class="control-row" style="justify-content:flex-end">
+      <button class="btn btn-sm btn-secondary" onclick="resetGraphView()">Reset view</button>
+    </div>
+  </div>
+
+  <div class="graph-tooltip" id="graphTooltip"></div>
+
+  <div class="graph-empty hidden" id="graphEmpty">
+    <div class="empty-icon">&#x1F578;</div>
+    <div>No tagged cards yet.</div>
+    <div style="font-size:.8rem">Add some tags from <a href="manage.html">Manage</a> to populate the graph.</div>
+  </div>
+
+  <div class="loading-state hidden" id="graphLoading" style="position:absolute;inset:0;background:rgba(15,15,15,.8)">
+    <div class="spinner"></div>
+    <div>Loading deck&hellip;</div>
+  </div>
+</div>
+
+<!-- Settings Modal (shared markup) -->
+<div class="modal-overlay hidden" id="settingsModal" onclick="if(event.target===this)toggleSettingsModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>GitHub Repo Settings</h3>
+      <button class="modal-close" onclick="toggleSettingsModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted" style="margin-bottom:1rem;font-size:.85rem">
+        Your data is stored as a JSON file in a GitHub repository.
+      </p>
+      <div class="form-field">
+        <label>GitHub Token</label>
+        <div style="position:relative">
+          <input type="password" id="ghTokenInput" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;padding-right:3rem">
+          <button class="btn-icon" onclick="toggleTokenVisibility()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%)" id="toggleVisBtn">&#x1F441;</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Owner</label>
+          <input type="text" id="repoOwnerInput" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Repository</label>
+          <input type="text" id="repoNameInput" style="width:100%">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Branch</label>
+          <input type="text" id="repoBranchInput" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>File Path</label>
+          <input type="text" id="repoPathInput" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="clearSettings()">Clear</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+// =============================================================
+// Tag Graph – Obsidian-style force-directed visualization
+// =============================================================
+//
+// Build:
+//   nodes  = unique tags. node.weight = number of cards with that tag.
+//   edges  = unordered tag pairs that co-occur on at least one card.
+//            edge.weight = number of cards both tags share.
+//
+// Forces:
+//   - Repulsion: every node pushes every other (Coulomb, F = k/r^2).
+//   - Spring  : every edge pulls its endpoints toward a rest length
+//               that *shrinks* as edge weight grows, so frequent
+//               co-occurrences end up closer together.
+//   - Centering: gentle pull toward (0,0) so the graph doesn't drift.
+// =============================================================
+
+var canvas = document.getElementById('graphCanvas');
+var ctx = canvas.getContext('2d');
+var tooltipEl = document.getElementById('graphTooltip');
+
+// Simulation state
+var nodes = [];            // [{id, weight, radius, x, y, vx, vy, fx, fy}]
+var edges = [];            // [{a, b, weight, rest}]
+var nodeById = {};         // id -> node
+
+// View transform
+var view = { x: 0, y: 0, scale: 1 };
+var dragging = null;       // { node } | { pan: true, startX, startY, viewX, viewY }
+var hoverNode = null;
+
+// Selection state — set by clicking a node. When non-null, only the
+// selected tag and its strongest-linked neighbors render at full
+// opacity; everything else dims into the background.
+var selectedNode = null;
+var selectedNeighborIds = {};   // id -> true (does NOT include selectedNode itself)
+var selectedEdgeKeys = {};      // "a||b" -> true (edges from selected to a kept neighbor)
+
+// "Strongest" cutoff: keep edges whose weight >= max-adjacent-weight * this.
+// 0.5 means "the half-strongest links survive." Tweak to taste.
+var SELECTION_STRENGTH_THRESHOLD = 0.5;
+
+// Click-vs-drag detection (set on mousedown, read on mouseup)
+var pressInfo = null;          // { x, y, t, node } | null
+
+// Tunables (live-bound to range inputs)
+var params = {
+  repulsion: 800,
+  linkStrength: 30 / 1000,   // scaled below
+  centering: 20 / 5000
+};
+
+// =============================================================
+// Build nodes & edges from cards
+// =============================================================
+
+function buildGraph(cards) {
+  nodes = [];
+  edges = [];
+  nodeById = {};
+  // Drop any stale selection — the node objects are about to be replaced.
+  clearSelection();
+  hoverNode = null;
+
+  var tagCounts = {};                  // tag -> number of cards
+  var pairCounts = {};                 // "a||b" (sorted) -> co-occurrence
+
+  cards.forEach(function (c) {
+    var tags = (c.tags || []).slice();
+    // De-dupe tags within a card so a single card can't double-count
+    var seen = {};
+    tags = tags.filter(function (t) {
+      if (!t || seen[t]) return false;
+      seen[t] = true;
+      return true;
+    });
+
+    tags.forEach(function (t) {
+      tagCounts[t] = (tagCounts[t] || 0) + 1;
+    });
+
+    // All unordered pairs from this card's tags
+    for (var i = 0; i < tags.length; i++) {
+      for (var j = i + 1; j < tags.length; j++) {
+        var a = tags[i], b = tags[j];
+        var key = a < b ? a + '||' + b : b + '||' + a;
+        pairCounts[key] = (pairCounts[key] || 0) + 1;
+      }
+    }
+  });
+
+  var tagNames = Object.keys(tagCounts);
+  var maxCount = 1;
+  tagNames.forEach(function (t) { if (tagCounts[t] > maxCount) maxCount = tagCounts[t]; });
+
+  // Position nodes initially on a circle so the layout starts spread out
+  var R = Math.min(canvas.width, canvas.height) * 0.25 / view.scale;
+  tagNames.forEach(function (t, i) {
+    var angle = (i / Math.max(1, tagNames.length)) * Math.PI * 2;
+    var weight = tagCounts[t];
+    // Radius scales with sqrt(frequency) so area ~ frequency.
+    var radius = 6 + Math.sqrt(weight) * 5;
+    var n = {
+      id: t,
+      weight: weight,
+      radius: radius,
+      x: Math.cos(angle) * R + (Math.random() - 0.5) * 20,
+      y: Math.sin(angle) * R + (Math.random() - 0.5) * 20,
+      vx: 0, vy: 0,
+      fx: 0, fy: 0
+    };
+    nodes.push(n);
+    nodeById[t] = n;
+  });
+
+  Object.keys(pairCounts).forEach(function (key) {
+    var parts = key.split('||');
+    var w = pairCounts[key];
+    // Rest length: more co-occurrences -> shorter desired length.
+    // Map weight=1 -> ~180px, weight grows -> 1/sqrt(w) scaling.
+    var rest = 50 + 150 / Math.sqrt(w);
+    edges.push({ a: parts[0], b: parts[1], weight: w, rest: rest });
+  });
+
+  // Update overlay stats
+  document.getElementById('statTags').textContent = nodes.length;
+  document.getElementById('statLinks').textContent = edges.length;
+  document.getElementById('statCards').textContent = cards.length;
+
+  document.getElementById('graphEmpty').classList.toggle('hidden', nodes.length > 0);
+}
+
+// =============================================================
+// Physics step (semi-implicit Euler)
+// =============================================================
+
+function step(dt) {
+  if (!nodes.length) return;
+
+  // Reset forces
+  for (var i = 0; i < nodes.length; i++) {
+    nodes[i].fx = 0;
+    nodes[i].fy = 0;
+  }
+
+  // Repulsion (O(n^2) — fine for the tag counts we expect)
+  var rep = params.repulsion;
+  for (var i = 0; i < nodes.length; i++) {
+    var a = nodes[i];
+    for (var j = i + 1; j < nodes.length; j++) {
+      var b = nodes[j];
+      var dx = a.x - b.x;
+      var dy = a.y - b.y;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < 0.01) { d2 = 0.01; dx = Math.random(); dy = Math.random(); }
+      var d = Math.sqrt(d2);
+      var f = rep / d2;
+      var fx = (dx / d) * f;
+      var fy = (dy / d) * f;
+      a.fx += fx; a.fy += fy;
+      b.fx -= fx; b.fy -= fy;
+    }
+  }
+
+  // Spring attraction along edges
+  var k = params.linkStrength;
+  for (var i = 0; i < edges.length; i++) {
+    var e = edges[i];
+    var a = nodeById[e.a];
+    var b = nodeById[e.b];
+    if (!a || !b) continue;
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+    var diff = d - e.rest;
+    // Stiffer springs for heavier edges so they shorten more aggressively
+    var stiffness = k * (1 + Math.log(1 + e.weight));
+    var f = diff * stiffness;
+    var fx = (dx / d) * f;
+    var fy = (dy / d) * f;
+    a.fx += fx; a.fy += fy;
+    b.fx -= fx; b.fy -= fy;
+  }
+
+  // Centering & integrate
+  var c = params.centering;
+  var damp = 0.85;
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    if (n === (dragging && dragging.node)) {
+      // Pinned to cursor — physics ignored.
+      n.vx = 0; n.vy = 0;
+      continue;
+    }
+    n.fx += -n.x * c;
+    n.fy += -n.y * c;
+    n.vx = (n.vx + n.fx * dt) * damp;
+    n.vy = (n.vy + n.fy * dt) * damp;
+    // Clamp absurd velocities (early simulation can overshoot)
+    var sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+    var maxSp = 200;
+    if (sp > maxSp) { n.vx *= maxSp / sp; n.vy *= maxSp / sp; }
+    n.x += n.vx * dt;
+    n.y += n.vy * dt;
+  }
+}
+
+// =============================================================
+// Selection
+// =============================================================
+
+function edgeKey(a, b) {
+  return a < b ? a + '||' + b : b + '||' + a;
+}
+
+function selectNode(node) {
+  selectedNode = node;
+  selectedNeighborIds = {};
+  selectedEdgeKeys = {};
+  if (!node) return;
+
+  // Find every edge touching the selected node and its other endpoint.
+  var adjacent = [];   // [{ otherId, weight, key }]
+  for (var i = 0; i < edges.length; i++) {
+    var e = edges[i];
+    var other = null;
+    if (e.a === node.id) other = e.b;
+    else if (e.b === node.id) other = e.a;
+    if (other === null) continue;
+    adjacent.push({ otherId: other, weight: e.weight, key: edgeKey(e.a, e.b) });
+  }
+  if (!adjacent.length) return;
+
+  // Keep neighbors whose edge weight is at or above the threshold,
+  // measured against the strongest adjacent edge. This adapts: a tag
+  // with one weight-5 link and many weight-1 links keeps just the 5.
+  var maxW = 0;
+  for (var i = 0; i < adjacent.length; i++) {
+    if (adjacent[i].weight > maxW) maxW = adjacent[i].weight;
+  }
+  var cutoff = Math.max(1, maxW * SELECTION_STRENGTH_THRESHOLD);
+  for (var i = 0; i < adjacent.length; i++) {
+    var a = adjacent[i];
+    if (a.weight >= cutoff) {
+      selectedNeighborIds[a.otherId] = true;
+      selectedEdgeKeys[a.key] = true;
+    }
+  }
+}
+
+function clearSelection() {
+  selectedNode = null;
+  selectedNeighborIds = {};
+  selectedEdgeKeys = {};
+}
+
+// =============================================================
+// Rendering
+// =============================================================
+
+// Draw a single edge. `state` is 'highlight' | 'normal' | 'dim'.
+function drawEdge(e, a, b, state) {
+  var alpha, width, color;
+  if (state === 'dim') {
+    alpha = 0.04;
+    width = 0.4 + Math.sqrt(e.weight) * 0.3;
+    color = 'rgba(120,140,180,' + alpha + ')';
+  } else if (state === 'highlight') {
+    alpha = 0.85;
+    width = 1.4 + Math.sqrt(e.weight) * 0.7;
+    color = 'rgba(120,180,255,' + alpha + ')';
+  } else {
+    alpha = 0.15 + Math.min(0.35, e.weight * 0.05);
+    width = 0.5 + Math.sqrt(e.weight) * 0.4;
+    color = 'rgba(120,140,180,' + alpha + ')';
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+}
+
+// Draw a single node + label. `state` is 'selected' | 'neighbor' | 'normal' | 'dim'.
+function drawNode(n, state) {
+  var fill, stroke, strokeWidth, labelAlpha;
+  var labelBase = Math.min(1, view.scale * 1.2 - 0.1);
+
+  if (state === 'dim') {
+    fill = 'rgba(122,167,220,0.18)';
+    stroke = 'rgba(255,255,255,0.06)';
+    strokeWidth = 1;
+    labelAlpha = labelBase * 0.2;
+  } else if (state === 'selected') {
+    fill = '#4a9eff';
+    stroke = '#fff';
+    strokeWidth = 2.5;
+    labelAlpha = 1;
+  } else if (state === 'neighbor') {
+    fill = '#7ec0ff';
+    stroke = 'rgba(255,255,255,0.55)';
+    strokeWidth = 1.5;
+    labelAlpha = 1;
+  } else {
+    fill = (hoverNode === n) ? '#4a9eff' : '#7aa7dc';
+    stroke = (hoverNode === n) ? '#fff' : 'rgba(255,255,255,.25)';
+    strokeWidth = (hoverNode === n) ? 2 : 1;
+    labelAlpha = (hoverNode === n) ? 1 : labelBase;
+  }
+
+  ctx.beginPath();
+  ctx.fillStyle = fill;
+  ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = strokeWidth;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+
+  if (labelAlpha > 0.05) {
+    ctx.font = (10 + Math.min(6, Math.sqrt(n.weight))) + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.fillStyle = 'rgba(230,230,230,' + labelAlpha + ')';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(n.id, n.x, n.y + n.radius + 3);
+  }
+}
+
+function draw() {
+  // resizeCanvas() stashes logical (CSS-pixel) dims here so we draw in
+  // CSS space while the canvas backing store stays DPR-scaled.
+  var w = canvas._logicalW || canvas.width;
+  var h = canvas._logicalH || canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.translate(w / 2 + view.x, h / 2 + view.y);
+  ctx.scale(view.scale, view.scale);
+  ctx.lineCap = 'round';
+
+  if (selectedNode) {
+    // ----- Selection mode: dim everything, then layer the focus on top.
+
+    // 1. Dim edges that don't survive the strength cutoff.
+    for (var i = 0; i < edges.length; i++) {
+      var e = edges[i];
+      var a = nodeById[e.a]; var b = nodeById[e.b];
+      if (!a || !b) continue;
+      if (selectedEdgeKeys[edgeKey(e.a, e.b)]) continue;
+      drawEdge(e, a, b, 'dim');
+    }
+    // 2. Dim nodes that aren't the selected one or a kept neighbor.
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n === selectedNode || selectedNeighborIds[n.id]) continue;
+      drawNode(n, 'dim');
+    }
+    // 3. Highlighted edges over the dim layer.
+    for (var i = 0; i < edges.length; i++) {
+      var e = edges[i];
+      if (!selectedEdgeKeys[edgeKey(e.a, e.b)]) continue;
+      var a = nodeById[e.a]; var b = nodeById[e.b];
+      if (!a || !b) continue;
+      drawEdge(e, a, b, 'highlight');
+    }
+    // 4. Neighbor nodes on top of edges.
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (selectedNeighborIds[n.id]) drawNode(n, 'neighbor');
+    }
+    // 5. Selected node last — guaranteed to sit on top of everything.
+    drawNode(selectedNode, 'selected');
+  } else {
+    // ----- Normal mode: edges first, then all nodes.
+    for (var i = 0; i < edges.length; i++) {
+      var e = edges[i];
+      var a = nodeById[e.a]; var b = nodeById[e.b];
+      if (!a || !b) continue;
+      var hovered = hoverNode && (hoverNode.id === e.a || hoverNode.id === e.b);
+      drawEdge(e, a, b, hovered ? 'highlight' : 'normal');
+    }
+    for (var i = 0; i < nodes.length; i++) {
+      drawNode(nodes[i], 'normal');
+    }
+  }
+
+  ctx.restore();
+}
+
+// =============================================================
+// Main loop
+// =============================================================
+
+var lastFrame = performance.now();
+function tick(now) {
+  var dt = Math.min(0.05, (now - lastFrame) / 1000);
+  lastFrame = now;
+  step(dt);
+  draw();
+  requestAnimationFrame(tick);
+}
+
+// =============================================================
+// Interaction: drag nodes, pan, zoom
+// =============================================================
+
+function canvasToWorld(cx, cy) {
+  return {
+    x: (cx - canvas.width / 2 - view.x) / view.scale,
+    y: (cy - canvas.height / 2 - view.y) / view.scale
+  };
+}
+
+function pickNode(cx, cy) {
+  var p = canvasToWorld(cx, cy);
+  // Reverse order so visually-topmost wins
+  for (var i = nodes.length - 1; i >= 0; i--) {
+    var n = nodes[i];
+    var dx = n.x - p.x;
+    var dy = n.y - p.y;
+    if (dx * dx + dy * dy <= (n.radius + 2) * (n.radius + 2)) {
+      return n;
+    }
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', function (e) {
+  var rect = canvas.getBoundingClientRect();
+  var cx = e.clientX - rect.left;
+  var cy = e.clientY - rect.top;
+  var n = pickNode(cx, cy);
+  // Record press info — mouseup decides click vs. drag from displacement.
+  pressInfo = { x: cx, y: cy, t: performance.now(), node: n };
+  if (n) {
+    dragging = { node: n };
+    canvas.classList.add('dragging-node');
+  } else {
+    dragging = { pan: true, startX: cx, startY: cy, viewX: view.x, viewY: view.y };
+    canvas.classList.add('grabbing');
+  }
+});
+
+window.addEventListener('mousemove', function (e) {
+  var rect = canvas.getBoundingClientRect();
+  var cx = e.clientX - rect.left;
+  var cy = e.clientY - rect.top;
+
+  if (dragging && dragging.node) {
+    var p = canvasToWorld(cx, cy);
+    dragging.node.x = p.x;
+    dragging.node.y = p.y;
+    dragging.node.vx = 0;
+    dragging.node.vy = 0;
+    return;
+  }
+  if (dragging && dragging.pan) {
+    view.x = dragging.viewX + (cx - dragging.startX);
+    view.y = dragging.viewY + (cy - dragging.startY);
+    return;
+  }
+
+  // Hover
+  var n = pickNode(cx, cy);
+  if (n !== hoverNode) {
+    hoverNode = n;
+    if (n) {
+      tooltipEl.innerHTML = '<strong>' + escapeHtml(n.id) +
+        '</strong><span class="tt-count">' + n.weight + ' card' + (n.weight === 1 ? '' : 's') + '</span>';
+      tooltipEl.classList.add('visible');
+    } else {
+      tooltipEl.classList.remove('visible');
+    }
+  }
+  if (n) {
+    tooltipEl.style.left = (e.clientX - rect.left) + 'px';
+    tooltipEl.style.top = (e.clientY - rect.top) + 'px';
+  }
+});
+
+window.addEventListener('mouseup', function (e) {
+  // Decide whether this was a click (select / deselect) or a drag.
+  if (pressInfo) {
+    var rect = canvas.getBoundingClientRect();
+    var cx = e.clientX - rect.left;
+    var cy = e.clientY - rect.top;
+    var dx = cx - pressInfo.x;
+    var dy = cy - pressInfo.y;
+    var moved = Math.sqrt(dx * dx + dy * dy);
+    var elapsed = performance.now() - pressInfo.t;
+    var isClick = moved < 4 && elapsed < 400;
+    if (isClick) {
+      if (pressInfo.node) {
+        // Toggle: re-clicking the selected node clears the focus.
+        if (selectedNode === pressInfo.node) clearSelection();
+        else selectNode(pressInfo.node);
+      } else {
+        clearSelection();
+      }
+    }
+  }
+  pressInfo = null;
+  dragging = null;
+  canvas.classList.remove('grabbing', 'dragging-node');
+});
+
+// ESC clears the selection (in addition to the shared.js modal handler).
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && selectedNode) {
+    clearSelection();
+  }
+});
+
+canvas.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  var rect = canvas.getBoundingClientRect();
+  var cx = e.clientX - rect.left;
+  var cy = e.clientY - rect.top;
+  var before = canvasToWorld(cx, cy);
+  var factor = Math.exp(-e.deltaY * 0.001);
+  view.scale = Math.max(0.15, Math.min(4, view.scale * factor));
+  var after = canvasToWorld(cx, cy);
+  // Zoom toward cursor
+  view.x += (after.x - before.x) * view.scale;
+  view.y += (after.y - before.y) * view.scale;
+}, { passive: false });
+
+function resetGraphView() {
+  view.x = 0;
+  view.y = 0;
+  view.scale = 1;
+}
+window.resetGraphView = resetGraphView;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+// =============================================================
+// Wiring up controls + resize + data load
+// =============================================================
+
+function resizeCanvas() {
+  var wrap = document.getElementById('graphWrap');
+  var dpr = window.devicePixelRatio || 1;
+  var w = wrap.clientWidth;
+  var h = wrap.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Internally, draw() treats canvas.width/height as already-scaled,
+  // so adjust by re-overriding the transform with the right "logical" size.
+  // We'll keep things simple by storing logical dims:
+  canvas._logicalW = w;
+  canvas._logicalH = h;
+}
+
+window.addEventListener('resize', resizeCanvas);
+
+document.getElementById('ctrlRepulsion').addEventListener('input', function (e) {
+  params.repulsion = +e.target.value;
+});
+document.getElementById('ctrlLink').addEventListener('input', function (e) {
+  params.linkStrength = +e.target.value / 1000;
+});
+document.getElementById('ctrlCenter').addEventListener('input', function (e) {
+  params.centering = +e.target.value / 5000;
+});
+
+function loadGraphData() {
+  var loadingEl = document.getElementById('graphLoading');
+  loadingEl.classList.remove('hidden');
+  loadDeck().then(function (data) {
+    buildGraph(data.cards || []);
+    loadingEl.classList.add('hidden');
+  }).catch(function (err) {
+    console.error('Failed to load deck:', err);
+    loadingEl.classList.add('hidden');
+    showToast('Failed to load deck: ' + err.message, 'error');
+  });
+}
+
+function onSettingsChanged() {
+  loadGraphData();
+}
+
+// Start
+resizeCanvas();
+requestAnimationFrame(tick);
+
+if (isConfigured()) {
+  loadGraphData();
+} else {
+  document.getElementById('graphEmpty').classList.remove('hidden');
+  document.getElementById('graphEmpty').innerHTML =
+    '<div class="empty-icon">&#x1F510;</div>' +
+    '<div>GitHub repo not configured.</div>' +
+    '<div style="font-size:.8rem"><a href="javascript:void(0)" onclick="toggleSettingsModal()">Connect your repo</a> to view the graph.</div>';
+}
+</script>
+</body>
+</html>

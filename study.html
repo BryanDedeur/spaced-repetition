@@ -90,6 +90,66 @@
       margin-top: .8rem;
       flex-wrap: wrap;
     }
+
+    /* Sketch pad below flashcard */
+    .sketch-area {
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: .6rem;
+      margin-bottom: 1rem;
+    }
+    .sketch-toolbar {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      margin-bottom: .5rem;
+      font-size: .75rem;
+      color: #888;
+    }
+    .sketch-toolbar .sketch-label {
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: #666;
+      margin-right: auto;
+    }
+    .sketch-toolbar .swatch {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid #333;
+      cursor: pointer;
+      padding: 0;
+    }
+    .sketch-toolbar .swatch.active {
+      outline: 2px solid #4a9eff;
+      outline-offset: 1px;
+    }
+    .sketch-toolbar input[type="range"] {
+      width: 80px;
+    }
+    .sketch-canvas-wrap {
+      position: relative;
+      width: 100%;
+      background: #0a0a0a;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 8 / 3;
+    }
+    .sketch-canvas-wrap canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      cursor: crosshair;
+    }
+    .sketch-status {
+      font-size: .7rem;
+      color: #555;
+      margin-top: .3rem;
+      text-align: right;
+      min-height: 1em;
+    }
   </style>
 </head>
 <body>
@@ -101,6 +161,8 @@
       <a href="index.html">Home</a>
       <a href="manage.html">Manage</a>
       <a href="study.html" class="active">Study</a>
+      <a href="graph.html">Graph</a>
+      <a href="stats.html">Stats</a>
     </div>
     <div class="nav-right">
       <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
@@ -135,6 +197,17 @@
             <div id="noTagsMsg" class="text-muted" style="font-size:.8rem;margin-top:.3rem"></div>
           </div>
 
+          <div class="form-row" style="margin-top:1rem">
+            <div class="form-field">
+              <label>New cards / day</label>
+              <input type="number" id="newPerDayInput" min="0" max="500" style="width:100%" oninput="onNewPerDayChange()">
+            </div>
+            <div class="form-field">
+              <label>&nbsp;</label>
+              <div class="text-muted" style="font-size:.8rem;padding-top:.55rem" id="newRemainingMsg"></div>
+            </div>
+          </div>
+
           <div style="margin-top:1rem;display:flex;gap:.5rem">
             <button class="btn btn-primary" onclick="startSession()" id="startBtn" style="flex:1">Start Studying</button>
           </div>
@@ -164,11 +237,29 @@
       <div class="card-content hidden" id="backContent"></div>
     </div>
 
+    <!-- Sketch pad — load existing drawing for this card, allow edits, save on rate -->
+    <div class="sketch-area" id="sketchArea">
+      <div class="sketch-toolbar">
+        <span class="sketch-label">Sketch</span>
+        <button type="button" class="swatch active" id="penWhite" style="background:#fff" onclick="setPenColor('#ffffff', this)" title="White"></button>
+        <button type="button" class="swatch" id="penBlue" style="background:#4a9eff" onclick="setPenColor('#4a9eff', this)" title="Blue"></button>
+        <button type="button" class="swatch" id="penYellow" style="background:#e8c840" onclick="setPenColor('#e8c840', this)" title="Yellow"></button>
+        <button type="button" class="swatch" id="penRed" style="background:#e55" onclick="setPenColor('#e55', this)" title="Red"></button>
+        <input type="range" id="penSize" min="1" max="20" value="3" oninput="setPenSize(this.value)" title="Pen size">
+        <button type="button" class="btn btn-sm btn-secondary" onclick="undoSketch()">Undo</button>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="clearSketch()">Clear</button>
+      </div>
+      <div class="sketch-canvas-wrap">
+        <canvas id="sketchCanvas" width="800" height="300"></canvas>
+      </div>
+      <div class="sketch-status" id="sketchStatus"></div>
+    </div>
+
     <div id="revealHint" class="study-hint">Click card or press Space to reveal answer</div>
 
     <div id="ratingSection" class="hidden">
       <div class="rating-buttons" id="ratingButtons"></div>
-      <div class="study-hint" style="margin-top:.6rem">Keyboard: 1 = Again, 2 = Hard, 3 = Good, 4 = Easy</div>
+      <div class="study-hint" style="margin-top:.6rem">Click a button or press its number key</div>
     </div>
   </div>
 
@@ -256,11 +347,30 @@
 <script src="shared.js"></script>
 <script>
   var deckData = { cards: [] };
-  var sessionCards = [];    // cards to review this session
+  var sessionCards = [];        // queue, may grow when learning cards are requeued
+  var sessionTotalTarget = 0;   // frozen at session start — progress-bar denominator
+  var sessionCompleted = 0;     // counts ratings that don't get requeued
+  var sessionRequeues = {};     // cardId -> requeue count (cap = 3 per card)
   var currentIndex = 0;
   var answerRevealed = false;
   var selectedTags = [];
   var sessionStats = { reviewed: 0, again: 0, good: 0 };
+  var REQUEUE_CAP = 3;
+  var REQUEUE_SOON_MS = 5 * 60 * 1000; // requeue learning cards whose next-due is within 5 min
+
+  // --- Sketch state ---
+  // The canvas is a fixed 800x300 raster (matches what we commit as PNG).
+  // CSS scales it to fit the viewport; pointer coords are mapped via the
+  // canvas/CSS-size ratio so strokes land where the user expects.
+  var sketchCanvas = null;
+  var sketchCtx = null;
+  var sketchDrawing = false;
+  var sketchDirty = false;            // set true once user has drawn anything not yet committed
+  var sketchHistory = [];             // ImageData snapshots for undo (cap = 20)
+  var SKETCH_HISTORY_CAP = 20;
+  var sketchPenColor = '#ffffff';
+  var sketchPenSize = 3;
+  var sketchLoadToken = 0;            // guard so a slow load can't paint over a newer card
 
   // --- Banner ---
   function updateBanner() {
@@ -298,13 +408,28 @@
 
   function renderSetup() {
     var cards = deckData.cards;
-    var dueCards = getDueCards(cards, []);
-    var newCards = cards.filter(function (c) { return isNew(c); });
+    var tagFilter = selectedTags.length > 0 ? selectedTags : null;
+    var counts = getDeckCounts(deckData, tagFilter);
+    var settings = getSrsSettings(deckData);
 
+    // Stats: split learning / review / new so the user can see what the cap actually does
+    var parts = [];
+    if (counts.learningDue > 0) parts.push('<strong>' + counts.learningDue + '</strong> learning');
+    if (counts.reviewDue > 0) parts.push('<strong>' + counts.reviewDue + '</strong> review');
+    if (counts.newDue > 0) parts.push('<strong>' + counts.newRemaining + '</strong> / ' + counts.newDue + ' new');
     document.getElementById('setupStats').innerHTML =
-      '<strong>' + dueCards.length + '</strong> cards due' +
-      (newCards.length > 0 ? ' (<strong>' + newCards.length + '</strong> new)' : '') +
-      ' out of <strong>' + cards.length + '</strong> total';
+      (parts.length > 0 ? parts.join(' &middot; ') : '<span class="text-muted">nothing due</span>') +
+      ' &nbsp;<span class="text-muted">(' + cards.length + ' total)</span>';
+
+    // New-per-day input reflects current per-deck setting
+    var npd = document.getElementById('newPerDayInput');
+    if (document.activeElement !== npd) npd.value = settings.newPerDay;
+
+    var deferred = Math.max(0, counts.newDue - counts.newRemaining);
+    var remainingMsg = '';
+    if (deferred > 0) remainingMsg = deferred + ' new card' + (deferred === 1 ? '' : 's') + ' held for tomorrow';
+    else if (counts.newDue > 0) remainingMsg = 'All available new cards included';
+    document.getElementById('newRemainingMsg').textContent = remainingMsg;
 
     var tags = getAllTags(cards);
     var grid = document.getElementById('tagGrid');
@@ -323,9 +448,18 @@
       }).join('');
     }
 
-    var dueFiltered = getDueCards(cards, selectedTags.length > 0 ? selectedTags : null);
-    document.getElementById('startBtn').textContent = 'Start Studying (' + dueFiltered.length + ' cards)';
-    document.getElementById('startBtn').disabled = dueFiltered.length === 0;
+    document.getElementById('startBtn').textContent = 'Start Studying (' + counts.sessionSize + ' cards)';
+    document.getElementById('startBtn').disabled = counts.sessionSize === 0;
+  }
+
+  function onNewPerDayChange() {
+    var v = parseInt(document.getElementById('newPerDayInput').value, 10);
+    if (isNaN(v) || v < 0) return;
+    deckData.meta = deckData.meta || {};
+    deckData.meta.srs = deckData.meta.srs || {};
+    deckData.meta.srs.newPerDay = v;
+    scheduleSave(deckData);
+    renderSetup();
   }
 
   function toggleStudyTag(tag) {
@@ -341,15 +475,10 @@
   // --- Session ---
   function startSession() {
     var tagFilter = selectedTags.length > 0 ? selectedTags : null;
-    sessionCards = getDueCards(deckData.cards, tagFilter);
-
-    // Shuffle
-    for (var i = sessionCards.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
-      var tmp = sessionCards[i];
-      sessionCards[i] = sessionCards[j];
-      sessionCards[j] = tmp;
-    }
+    sessionCards = buildSession(deckData, tagFilter);
+    sessionTotalTarget = sessionCards.length;
+    sessionCompleted = 0;
+    sessionRequeues = {};
 
     currentIndex = 0;
     answerRevealed = false;
@@ -358,6 +487,10 @@
     document.getElementById('setupView').classList.add('hidden');
     document.getElementById('studyView').classList.remove('hidden');
     document.getElementById('completeView').classList.add('hidden');
+
+    // Canvas needs to exist + be laid out before we wire pointer handlers;
+    // the study view was hidden until just now, so initialize on first entry.
+    if (!sketchCtx) initSketchPad();
 
     showCurrentCard();
   }
@@ -371,13 +504,14 @@
     var card = sessionCards[currentIndex];
     answerRevealed = false;
 
-    // Progress
-    document.getElementById('progressText').textContent = (currentIndex + 1) + ' / ' + sessionCards.length;
-    var pct = sessionCards.length > 0 ? ((currentIndex) / sessionCards.length * 100) : 0;
+    // Progress (denominator is frozen; numerator counts non-requeued ratings)
+    document.getElementById('progressText').textContent = sessionCompleted + ' / ' + sessionTotalTarget;
+    var pct = sessionTotalTarget > 0 ? (sessionCompleted / sessionTotalTarget * 100) : 0;
     document.getElementById('progressFill').style.width = pct + '%';
 
     // Front
-    document.getElementById('cardLabel').textContent = 'FRONT';
+    var stateLabel = isNew(card) ? 'NEW' : (isLearning(card) ? 'LEARNING' : 'FRONT');
+    document.getElementById('cardLabel').textContent = stateLabel;
     document.getElementById('cardContent').innerHTML = renderMarkdown(card.front);
 
     // Tags
@@ -394,6 +528,9 @@
     // Show hint, hide rating
     document.getElementById('revealHint').classList.remove('hidden');
     document.getElementById('ratingSection').classList.add('hidden');
+
+    // Pull this card's sketch (if any) and let the user draw / edit
+    loadSketchForCard(card.id);
   }
 
   function revealAnswer() {
@@ -413,63 +550,254 @@
     document.getElementById('revealHint').classList.add('hidden');
     document.getElementById('ratingSection').classList.remove('hidden');
 
-    // Render rating buttons with interval previews
-    var previews = previewIntervals(card);
+    // Render rating buttons. Each button is large, color-coded, shows its
+    // keyboard shortcut as a chip in the corner, and previews the resulting
+    // interval. The id="rateBtn{i}" hook lets the keyboard handler flash
+    // the matching button when the user presses a number key.
+    var previews = previewLabels(card, getSrsSettings(deckData));
     var labels = ['Again', 'Hard', 'Good', 'Easy'];
-    var colors = ['btn-danger', 'btn-warning', 'btn-success', 'btn-primary'];
+    var slugs = ['again', 'hard', 'good', 'easy'];
 
     var html = '';
     for (var i = 0; i < 4; i++) {
-      html += '<button class="btn ' + colors[i] + '" onclick="rateCard(' + i + ')">' +
-        labels[i] +
-        '<span class="rating-interval">' + formatInterval(previews[i]) + '</span>' +
+      html += '<button type="button" class="rating-btn rating-btn-' + slugs[i] + '" ' +
+        'id="rateBtn' + i + '" onclick="rateCard(' + i + ')" ' +
+        'aria-keyshortcuts="' + (i + 1) + '" title="' + labels[i] + ' (' + (i + 1) + ')">' +
+        '<span class="rating-kbd">' + (i + 1) + '</span>' +
+        '<span class="rating-label">' + labels[i] + '</span>' +
+        '<span class="rating-interval">' + previews[i] + '</span>' +
       '</button>';
     }
     document.getElementById('ratingButtons').innerHTML = html;
   }
 
+  // Briefly toggle .is-pressed on a rating button so keyboard input gets the
+  // same visual feedback as a mouse press. The rateCard() call is deferred a
+  // few ms so the press animation is actually visible before the next card
+  // replaces the current view.
+  function pressAndRate(quality) {
+    var btn = document.getElementById('rateBtn' + quality);
+    if (btn) {
+      btn.classList.add('is-pressed');
+      setTimeout(function () {
+        if (btn) btn.classList.remove('is-pressed');
+        rateCard(quality);
+      }, 90);
+    } else {
+      rateCard(quality);
+    }
+  }
+
   function rateCard(quality) {
     var card = sessionCards[currentIndex];
-    var result = sm2(card, quality);
+    var settings = getSrsSettings(deckData);
 
-    // Update card in deckData
-    var deckCard = deckData.cards.find(function (c) { return c.id === card.id; });
-    if (deckCard) {
-      deckCard.interval = result.interval;
-      deckCard.repetitions = result.repetitions;
-      deckCard.easeFactor = result.easeFactor;
-      deckCard.due = result.due;
-      deckCard.lastReview = result.lastReview;
+    // Track new-card budget BEFORE mutating (isNew checks pre-rating state)
+    var wasNew = isNew(card);
+
+    var result = sm2(card, quality, settings);
+
+    // Mutate deck + session card. They reference the same object normally, but
+    // be defensive in case buildSession decoupled them.
+    function applyResult(target) {
+      target.interval = result.interval;
+      target.repetitions = result.repetitions;
+      target.easeFactor = result.easeFactor;
+      target.due = result.due;
+      target.lastReview = result.lastReview;
+      target.learningStep = result.learningStep;
+      target.lapses = result.lapses;
+      target.isLeech = result.isLeech;
     }
+    var deckCard = deckData.cards.find(function (c) { return c.id === card.id; });
+    if (deckCard) applyResult(deckCard);
+    applyResult(card);
 
-    // Also update session card reference
-    card.interval = result.interval;
-    card.repetitions = result.repetitions;
-    card.easeFactor = result.easeFactor;
-    card.due = result.due;
-    card.lastReview = result.lastReview;
+    if (wasNew) recordNewIntroduced(deckData);
 
     // Track stats
     sessionStats.reviewed++;
-    if (quality === 0) {
-      sessionStats.again++;
-      // Re-add "Again" cards to the end of the queue
-      sessionCards.push(card);
-    } else {
-      sessionStats.good++;
-    }
+    if (quality === 0) sessionStats.again++;
+    else sessionStats.good++;
 
-    // Schedule batched save (coalesces rapid ratings into fewer commits)
+    // Decide whether to requeue this card in-session. We only requeue learning-state
+    // cards whose next due time falls inside the session's natural window, and we
+    // cap per-card requeues so a stubborn card can't loop forever.
+    var requeued = false;
+    if (result.learningStep != null) {
+      var soon = (new Date(result.due) - new Date()) <= REQUEUE_SOON_MS;
+      var count = sessionRequeues[card.id] || 0;
+      if (soon && count < REQUEUE_CAP) {
+        sessionRequeues[card.id] = count + 1;
+        // Insert 3–8 cards ahead (or at end if not enough room), avoiding immediate repeat.
+        var remaining = sessionCards.length - currentIndex - 1;
+        var offset = Math.min(remaining, 3 + Math.floor(Math.random() * 6));
+        sessionCards.splice(currentIndex + 1 + offset, 0, card);
+        requeued = true;
+      }
+    }
+    if (!requeued) sessionCompleted++;
+
     scheduleSave(deckData);
 
-    // Next card
+    // Commit the sketch for the card we just rated, before the canvas is
+    // repainted for the next one. Fire-and-forget — the commit is independent
+    // of the SRS state, so a failure shouldn't block progress.
+    persistSketchIfDirty(card.id);
+
     currentIndex++;
     showCurrentCard();
+  }
+
+  // --- Sketch ---
+
+  function initSketchPad() {
+    sketchCanvas = document.getElementById('sketchCanvas');
+    sketchCtx = sketchCanvas.getContext('2d');
+    resetSketchCanvas();
+
+    function pos(e) {
+      var rect = sketchCanvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (sketchCanvas.width / rect.width),
+        y: (e.clientY - rect.top) * (sketchCanvas.height / rect.height)
+      };
+    }
+
+    sketchCanvas.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      sketchCanvas.setPointerCapture(e.pointerId);
+      pushSketchHistory();
+      sketchDrawing = true;
+      var p = pos(e);
+      sketchCtx.strokeStyle = sketchPenColor;
+      sketchCtx.lineWidth = sketchPenSize;
+      sketchCtx.lineCap = 'round';
+      sketchCtx.lineJoin = 'round';
+      sketchCtx.beginPath();
+      sketchCtx.moveTo(p.x, p.y);
+      // Single tap leaves a dot
+      sketchCtx.lineTo(p.x + 0.01, p.y + 0.01);
+      sketchCtx.stroke();
+      sketchDirty = true;
+    });
+    sketchCanvas.addEventListener('pointermove', function (e) {
+      if (!sketchDrawing) return;
+      e.preventDefault();
+      var p = pos(e);
+      sketchCtx.lineTo(p.x, p.y);
+      sketchCtx.stroke();
+    });
+    function endStroke(e) {
+      if (!sketchDrawing) return;
+      sketchDrawing = false;
+      try { sketchCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+    sketchCanvas.addEventListener('pointerup', endStroke);
+    sketchCanvas.addEventListener('pointercancel', endStroke);
+    sketchCanvas.addEventListener('pointerleave', function () { sketchDrawing = false; });
+  }
+
+  // Paint dark background — strokes are drawn directly onto this, so the
+  // committed PNG is the full rendered image (no transparency surprises).
+  function resetSketchCanvas() {
+    sketchCtx.fillStyle = '#0a0a0a';
+    sketchCtx.fillRect(0, 0, sketchCanvas.width, sketchCanvas.height);
+  }
+
+  function pushSketchHistory() {
+    if (!sketchCtx) return;
+    if (sketchHistory.length >= SKETCH_HISTORY_CAP) sketchHistory.shift();
+    sketchHistory.push(sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height));
+  }
+
+  function undoSketch() {
+    if (!sketchCtx || sketchHistory.length === 0) return;
+    var img = sketchHistory.pop();
+    sketchCtx.putImageData(img, 0, 0);
+    sketchDirty = true;
+  }
+
+  function clearSketch() {
+    if (!sketchCtx) return;
+    pushSketchHistory();
+    resetSketchCanvas();
+    sketchDirty = true;
+  }
+
+  function setPenColor(color, btn) {
+    sketchPenColor = color;
+    var swatches = document.querySelectorAll('.sketch-toolbar .swatch');
+    for (var i = 0; i < swatches.length; i++) swatches[i].classList.remove('active');
+    if (btn) btn.classList.add('active');
+  }
+
+  function setPenSize(v) {
+    sketchPenSize = parseInt(v, 10) || 3;
+  }
+
+  // Load the saved sketch for `cardId`, if any. Always reset to a blank dark
+  // canvas first so the previous card's drawing doesn't leak through.
+  function loadSketchForCard(cardId) {
+    if (!sketchCtx) return;
+    sketchHistory = [];
+    sketchDirty = false;
+    resetSketchCanvas();
+    setSketchStatus('');
+
+    var token = ++sketchLoadToken;
+    if (!isConfigured()) return;
+
+    loadSketch(cardId).then(function (dataUrl) {
+      if (token !== sketchLoadToken) return; // a newer card was shown
+      if (!dataUrl) return;
+      var img = new Image();
+      img.onload = function () {
+        if (token !== sketchLoadToken) return;
+        sketchCtx.drawImage(img, 0, 0, sketchCanvas.width, sketchCanvas.height);
+        sketchDirty = false;
+      };
+      img.src = dataUrl;
+    }).catch(function (err) {
+      // 404 already returns null; anything else here is a real error.
+      setSketchStatus('Could not load sketch');
+      console.error('loadSketch failed:', err);
+    });
+  }
+
+  // Commit the current canvas to the repo. Only does anything if the user
+  // actually drew something this session.
+  function persistSketchIfDirty(cardId) {
+    if (!sketchCtx || !sketchDirty) return;
+    if (!isConfigured()) return;
+    var dataUrl = sketchCanvas.toDataURL('image/png');
+    var base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    sketchDirty = false;
+    setSketchStatus('Saving sketch…');
+    saveSketch(cardId, base64).then(function () {
+      setSketchStatus('');
+    }).catch(function (err) {
+      // Surface the failure but don't block the session — they'll just retry
+      // on the next rating if they keep drawing.
+      sketchDirty = true;
+      showToast('Sketch save failed: ' + err.message, 'error');
+      setSketchStatus('Save failed');
+    });
+  }
+
+  function setSketchStatus(msg) {
+    var el = document.getElementById('sketchStatus');
+    if (el) el.textContent = msg;
   }
 
   function finishSession() {
     // Flush any pending batched saves before showing completion
     flushSave();
+
+    // A sketch on the *currently displayed* card may still be uncommitted
+    // (it's only committed on rate). Push it before leaving the study view.
+    var pendingCard = sessionCards[currentIndex];
+    if (pendingCard && sketchDirty) persistSketchIfDirty(pendingCard.id);
 
     document.getElementById('studyView').classList.add('hidden');
     document.getElementById('completeView').classList.remove('hidden');
@@ -500,10 +828,12 @@
         e.preventDefault();
         revealAnswer();
       } else if (answerRevealed) {
-        if (e.key === '1') rateCard(0);
-        else if (e.key === '2') rateCard(1);
-        else if (e.key === '3') rateCard(2);
-        else if (e.key === '4') rateCard(3);
+        var q = -1;
+        if (e.key === '1') q = 0;
+        else if (e.key === '2') q = 1;
+        else if (e.key === '3') q = 2;
+        else if (e.key === '4') q = 3;
+        if (q >= 0) { e.preventDefault(); pressAndRate(q); }
       }
     }
   });

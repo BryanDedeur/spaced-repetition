@@ -21,6 +21,8 @@
       <a href="index.html">Home</a>
       <a href="manage.html" class="active">Manage</a>
       <a href="study.html">Study</a>
+      <a href="graph.html">Graph</a>
+      <a href="stats.html">Stats</a>
     </div>
     <div class="nav-right">
       <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
@@ -50,6 +52,39 @@
     </div>
     <div class="tag-filter-bar" id="tagFilterBar"></div>
 
+    <!-- Quick filters -->
+    <div class="tag-filter-bar" id="quickFilterBar" style="margin-bottom:.5rem">
+      <span class="filter-label">Show:</span>
+      <span class="tag-pill tag-clickable" id="filterAll" onclick="setQuickFilter('all')">All</span>
+      <span class="tag-pill tag-clickable" id="filterDue" onclick="setQuickFilter('due')">Due</span>
+      <span class="tag-pill tag-clickable" id="filterNew" onclick="setQuickFilter('new')">New</span>
+      <span class="tag-pill tag-clickable" id="filterLearning" onclick="setQuickFilter('learning')">Learning</span>
+      <span class="tag-pill tag-clickable" id="filterLeech" onclick="setQuickFilter('leech')">Leeches</span>
+    </div>
+
+    <!-- Study settings -->
+    <details style="margin-bottom:.8rem">
+      <summary style="font-size:.8rem;color:#888;cursor:pointer">Study settings</summary>
+      <div class="form-row" style="margin-top:.5rem">
+        <div class="form-field">
+          <label>New cards / day</label>
+          <input type="number" id="setNewPerDay" min="0" max="500" oninput="updateSrsSetting('newPerDay', this.value, true)" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Learning steps (min, comma-sep)</label>
+          <input type="text" id="setLearningSteps" placeholder="1, 10" oninput="updateSrsSetting('learningSteps', this.value, false)" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Relearning steps (min)</label>
+          <input type="text" id="setRelearningSteps" placeholder="10" oninput="updateSrsSetting('relearningSteps', this.value, false)" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Leech threshold (lapses)</label>
+          <input type="number" id="setLeechThreshold" min="2" max="50" oninput="updateSrsSetting('leechThreshold', this.value, true)" style="width:100%">
+        </div>
+      </div>
+    </details>
+
     <!-- Card Table -->
     <div id="loadingState" class="loading-state hidden">
       <div class="spinner"></div>
@@ -67,8 +102,10 @@
           <tr>
             <th>Front</th>
             <th>Tags</th>
+            <th>State</th>
             <th>Due</th>
             <th>Interval</th>
+            <th>Lapses</th>
             <th class="cell-actions">Actions</th>
           </tr>
         </thead>
@@ -216,6 +253,40 @@
   var deckData = { cards: [] };
   var editingCardId = null;
   var activeTagFilters = [];
+  var quickFilter = 'all'; // 'all' | 'due' | 'new' | 'learning' | 'leech'
+
+  function setQuickFilter(name) {
+    quickFilter = name;
+    ['All', 'Due', 'New', 'Learning', 'Leech'].forEach(function (n) {
+      var el = document.getElementById('filter' + n);
+      if (el) el.classList.toggle('tag-selected', name === n.toLowerCase());
+    });
+    renderCards();
+  }
+
+  function renderSrsSettingsUI() {
+    var s = getSrsSettings(deckData);
+    var el = function (id) { return document.getElementById(id); };
+    if (el('setNewPerDay') && document.activeElement !== el('setNewPerDay')) el('setNewPerDay').value = s.newPerDay;
+    if (el('setLearningSteps') && document.activeElement !== el('setLearningSteps')) el('setLearningSteps').value = s.learningSteps.join(', ');
+    if (el('setRelearningSteps') && document.activeElement !== el('setRelearningSteps')) el('setRelearningSteps').value = s.relearningSteps.join(', ');
+    if (el('setLeechThreshold') && document.activeElement !== el('setLeechThreshold')) el('setLeechThreshold').value = s.leechThreshold;
+  }
+
+  function updateSrsSetting(key, raw, isInt) {
+    deckData.meta = deckData.meta || {};
+    deckData.meta.srs = deckData.meta.srs || {};
+    if (isInt) {
+      var n = parseInt(raw, 10);
+      if (isNaN(n) || n < 0) return;
+      deckData.meta.srs[key] = n;
+    } else {
+      var arr = String(raw).split(',').map(function (s) { return parseInt(s.trim(), 10); }).filter(function (n) { return !isNaN(n) && n > 0; });
+      if (arr.length === 0) return;
+      deckData.meta.srs[key] = arr;
+    }
+    scheduleSave(deckData);
+  }
 
   // --- Banner ---
   function updateBanner() {
@@ -244,6 +315,8 @@
     loadDeck().then(function (data) {
       deckData = data;
       if (!deckData.cards) deckData.cards = [];
+      renderSrsSettingsUI();
+      setQuickFilter(quickFilter);
       renderTagFilter();
       renderCards();
       btn.disabled = false;
@@ -294,12 +367,18 @@
 
   function renderCards() {
     var search = document.getElementById('searchInput').value.toLowerCase();
+    var s = getSrsSettings(deckData);
     var cards = deckData.cards.filter(function (c) {
       // Tag filter
       if (activeTagFilters.length > 0) {
         var hasTag = activeTagFilters.some(function (t) { return c.tags.indexOf(t) >= 0; });
         if (!hasTag) return false;
       }
+      // Quick filter
+      if (quickFilter === 'due' && !isDue(c)) return false;
+      if (quickFilter === 'new' && !isNew(c)) return false;
+      if (quickFilter === 'learning' && (isNew(c) || !isLearning(c))) return false;
+      if (quickFilter === 'leech' && !(c.isLeech || (c.lapses || 0) >= s.leechThreshold)) return false;
       // Search filter
       if (search) {
         var haystack = (c.front + ' ' + c.back + ' ' + c.tags.join(' ')).toLowerCase();
@@ -329,10 +408,7 @@
       var dueDate = new Date(c.due);
       var now = new Date();
       var dueStr, dueClass;
-      if (isNew(c)) {
-        dueStr = 'New';
-        dueClass = 'badge-blue';
-      } else if (dueDate <= now) {
+      if (dueDate <= now) {
         dueStr = 'Due';
         dueClass = 'badge-orange';
       } else {
@@ -340,15 +416,30 @@
         dueClass = 'badge-green';
       }
 
+      // State badge (new / learning / review) + optional leech flag
+      var stateHtml;
+      if (isNew(c)) stateHtml = '<span class="badge badge-blue">New</span>';
+      else if (isLearning(c)) stateHtml = '<span class="badge badge-orange">Learning</span>';
+      else stateHtml = '<span class="badge badge-green">Review</span>';
+      var leech = c.isLeech || (c.lapses || 0) >= s.leechThreshold;
+      if (leech) stateHtml += ' <span class="badge" style="background:#5a1f1f;color:#ff8080">Leech</span>';
+
       var tagsHtml = c.tags.map(function (t) {
         return '<span class="tag-pill">' + escHtml(t) + '</span>';
       }).join(' ');
 
+      var intervalStr;
+      if (isLearning(c) && !isNew(c)) intervalStr = 'step ' + (c.learningStep + 1);
+      else if (c.interval > 0) intervalStr = formatInterval(c.interval);
+      else intervalStr = '—';
+
       html += '<tr class="card-row" onclick="openCardModal(\'' + c.id + '\')">' +
         '<td><div class="md-preview">' + renderMarkdown(c.front) + '</div></td>' +
         '<td>' + tagsHtml + '</td>' +
+        '<td>' + stateHtml + '</td>' +
         '<td><span class="badge ' + dueClass + '">' + dueStr + '</span></td>' +
-        '<td>' + (c.interval > 0 ? formatInterval(c.interval) : '—') + '</td>' +
+        '<td>' + intervalStr + '</td>' +
+        '<td>' + (c.lapses || 0) + '</td>' +
         '<td class="cell-actions">' +
           '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();openCardModal(\'' + c.id + '\')">Edit</button>' +
         '</td>' +
@@ -532,6 +623,8 @@
           easeFactor: c.easeFactor || 2.5,
           due: c.due || null,
           lastReview: c.lastReview || null,
+          learningStep: c.learningStep !== undefined ? c.learningStep : (c.repetitions > 0 ? null : 0),
+          lapses: c.lapses || 0,
           hasScheduling: !!(c.lastReview || c.repetitions > 0),
           duplicate: isDupe
         });
@@ -594,6 +687,8 @@
         card.easeFactor = c.easeFactor;
         card.due = c.due;
         card.lastReview = c.lastReview;
+        card.learningStep = c.learningStep;
+        card.lapses = c.lapses;
       }
       deckData.cards.push(card);
     });

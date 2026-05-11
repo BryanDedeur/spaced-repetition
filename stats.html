@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stats &mdash; Spaced Repetition</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    .stats-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .4rem;
+      margin-bottom: 1rem;
+    }
+    .stats-toolbar .toolbar-label {
+      font-size: .72rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-right: .3rem;
+    }
+    .range-btn {
+      background: #222;
+      border: 1px solid #333;
+      color: #ccc;
+      padding: .3rem .7rem;
+      border-radius: 6px;
+      font-size: .78rem;
+      cursor: pointer;
+      transition: background .12s, border-color .12s, color .12s;
+    }
+    .range-btn:hover { border-color: #4a9eff; color: #fff; }
+    .range-btn.active { background: #1a2a3a; border-color: #4a9eff; color: #4a9eff; }
+
+    /* Two-column chart grid for medium+ screens */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .chart-panel {
+      background: #181818;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 1rem 1rem .8rem;
+    }
+
+    .chart-panel.full { grid-column: 1 / -1; }
+
+    .chart-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: .6rem;
+      gap: 1rem;
+    }
+    .chart-header h3 {
+      font-size: .92rem;
+      font-weight: 600;
+      color: #fff;
+    }
+    .chart-header .chart-sub {
+      font-size: .72rem;
+      color: #777;
+    }
+
+    .chart-canvas-wrap {
+      position: relative;
+      width: 100%;
+      height: 220px;
+    }
+    .chart-canvas-wrap canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .chart-canvas-wrap.tall { height: 260px; }
+
+    .chart-empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+      font-size: .85rem;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .8rem;
+      margin-top: .4rem;
+      font-size: .72rem;
+      color: #888;
+    }
+    .legend .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      margin-right: .35rem;
+      vertical-align: middle;
+    }
+
+    /* Tooltip shared across charts */
+    .chart-tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(20,20,20,.96);
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: .4rem .55rem;
+      font-size: .75rem;
+      color: #e0e0e0;
+      transform: translate(-50%, calc(-100% - 10px));
+      opacity: 0;
+      transition: opacity .12s;
+      white-space: nowrap;
+      z-index: 200;
+    }
+    .chart-tooltip.visible { opacity: 1; }
+    .chart-tooltip .tt-label { color: #888; }
+    .chart-tooltip .tt-value { color: #fff; font-weight: 600; margin-left: .4rem; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">Spaced Repetition</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="manage.html">Manage</a>
+      <a href="study.html">Study</a>
+      <a href="graph.html">Graph</a>
+      <a href="stats.html" class="active">Stats</a>
+    </div>
+    <div class="nav-right">
+      <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <div style="text-align:center;padding:1.6rem 1rem 1rem">
+    <h1 style="font-size:1.6rem;font-weight:700;color:#fff">Learning Stats</h1>
+    <p style="color:#888;margin-top:.3rem;font-size:.85rem">Track your progress and review activity over time.</p>
+  </div>
+
+  <div id="settingsBanner" class="banner banner-warning hidden">
+    GitHub repo not configured. <a href="javascript:void(0)" onclick="toggleSettingsModal()">Set up your connection</a> to view stats.
+  </div>
+
+  <!-- Headline numbers -->
+  <div class="stats-grid" id="headlineStats">
+    <div class="stat-card">
+      <div class="stat-value" id="hsTotal">0</div>
+      <div class="stat-label">Total Cards</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="hsReviewed" style="color:#4a9eff">0</div>
+      <div class="stat-label">Reviewed (range)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="hsCreated" style="color:#e8c840">0</div>
+      <div class="stat-label">Added (range)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="hsMastered" style="color:#2ecc71">0</div>
+      <div class="stat-label">Mastered (21d+)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="hsAvgEase" style="color:#e8a040">0.00</div>
+      <div class="stat-label">Avg Ease</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="hsStreak" style="color:#7ec0ff">0</div>
+      <div class="stat-label">Day Streak</div>
+    </div>
+  </div>
+
+  <!-- Range selector -->
+  <div class="stats-toolbar">
+    <span class="toolbar-label">Range</span>
+    <button class="range-btn" data-range="7">7 days</button>
+    <button class="range-btn active" data-range="30">30 days</button>
+    <button class="range-btn" data-range="90">90 days</button>
+    <button class="range-btn" data-range="365">1 year</button>
+    <button class="range-btn" data-range="all">All time</button>
+    <div class="spacer"></div>
+    <span class="chart-sub" id="rangeSub" style="color:#666;font-size:.72rem"></span>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+
+    <div class="chart-panel">
+      <div class="chart-header">
+        <h3>Review activity</h3>
+        <span class="chart-sub">cards last reviewed per day</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="chartReviews"></canvas>
+        <div class="chart-empty hidden" id="emptyReviews">No review activity yet</div>
+      </div>
+      <div class="legend"><span><span class="dot" style="background:#4a9eff"></span>Reviews</span></div>
+    </div>
+
+    <div class="chart-panel">
+      <div class="chart-header">
+        <h3>Cards added</h3>
+        <span class="chart-sub">new cards created per day</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="chartCreated"></canvas>
+        <div class="chart-empty hidden" id="emptyCreated">No cards in this range</div>
+      </div>
+      <div class="legend"><span><span class="dot" style="background:#e8c840"></span>Added</span></div>
+    </div>
+
+    <div class="chart-panel full">
+      <div class="chart-header">
+        <h3>Cumulative deck size</h3>
+        <span class="chart-sub">total cards over time</span>
+      </div>
+      <div class="chart-canvas-wrap tall">
+        <canvas id="chartCumulative"></canvas>
+        <div class="chart-empty hidden" id="emptyCumulative">No cards yet</div>
+      </div>
+      <div class="legend"><span><span class="dot" style="background:#2ecc71"></span>Total cards</span></div>
+    </div>
+
+    <div class="chart-panel">
+      <div class="chart-header">
+        <h3>Card maturity</h3>
+        <span class="chart-sub">current snapshot</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="chartMaturity"></canvas>
+        <div class="chart-empty hidden" id="emptyMaturity">No cards yet</div>
+      </div>
+    </div>
+
+    <div class="chart-panel">
+      <div class="chart-header">
+        <h3>Interval distribution</h3>
+        <span class="chart-sub">graduated cards, log buckets</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="chartInterval"></canvas>
+        <div class="chart-empty hidden" id="emptyInterval">No graduated cards yet</div>
+      </div>
+    </div>
+
+    <div class="chart-panel full">
+      <div class="chart-header">
+        <h3>Ease factor distribution</h3>
+        <span class="chart-sub">how easy your cards feel on average</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="chartEase"></canvas>
+        <div class="chart-empty hidden" id="emptyEase">No graduated cards yet</div>
+      </div>
+    </div>
+
+  </div>
+
+  <p style="color:#555;font-size:.75rem;margin:.5rem 0 2rem;text-align:center;line-height:1.5">
+    Note: "Review activity" reflects each card's <em>most recent</em> review &mdash; the full per-review log isn't persisted yet,
+    so days with multiple reviews of the same card count once. To track every individual review going forward, a review log
+    would need to be added to the deck schema.
+  </p>
+</div>
+
+<!-- Shared tooltip -->
+<div class="chart-tooltip" id="chartTooltip"></div>
+
+<!-- Settings Modal (shared markup) -->
+<div class="modal-overlay hidden" id="settingsModal" onclick="if(event.target===this)toggleSettingsModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>GitHub Repo Settings</h3>
+      <button class="modal-close" onclick="toggleSettingsModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted" style="margin-bottom:1rem;font-size:.85rem">
+        Your data is stored as a JSON file in a GitHub repository.
+      </p>
+      <div class="form-field">
+        <label>GitHub Token</label>
+        <div style="position:relative">
+          <input type="password" id="ghTokenInput" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;padding-right:3rem">
+          <button class="btn-icon" onclick="toggleTokenVisibility()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%)" id="toggleVisBtn">&#x1F441;</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Owner</label>
+          <input type="text" id="repoOwnerInput" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>Repository</label>
+          <input type="text" id="repoNameInput" style="width:100%">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Branch</label>
+          <input type="text" id="repoBranchInput" style="width:100%">
+        </div>
+        <div class="form-field">
+          <label>File Path</label>
+          <input type="text" id="repoPathInput" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="clearSettings()">Clear</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+// =============================================================
+// Stats page – canvas-drawn line / bar charts, no dependencies.
+//
+// Data model limits: cards only persist `created` and `lastReview`,
+// so per-review history is approximated as one event per card per
+// day (the most recent review). Distributions (interval, ease,
+// maturity) are exact current snapshots.
+// =============================================================
+
+var deckCards = [];
+var currentRange = 30;    // days; 'all' becomes Infinity below
+var tooltipEl = document.getElementById('chartTooltip');
+
+// --- Date helpers --------------------------------------------------
+
+function startOfDay(d) {
+  var x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function dayDiff(a, b) {
+  return Math.floor((startOfDay(a) - startOfDay(b)) / 86400000);
+}
+
+function fmtShortDate(d) {
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + ' ' + d.getDate();
+}
+
+function fmtLongDate(d) {
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+}
+
+// --- Bucketing -----------------------------------------------------
+// Build a daily series [{date, value}] from a list of cards using
+// the given timestamp field, restricted to the active range.
+
+function dailySeries(cards, field) {
+  var now = startOfDay(new Date());
+  var rangeDays = currentRange === 'all' ? null : currentRange;
+  var earliest = null;
+
+  // First pass: filter to valid timestamps in range and find earliest.
+  var stamps = [];
+  cards.forEach(function (c) {
+    var v = c[field];
+    if (!v) return;
+    var d = startOfDay(new Date(v));
+    if (isNaN(d)) return;
+    if (rangeDays != null && dayDiff(now, d) >= rangeDays) return;
+    if (d > now) return; // ignore future-dated entries
+    stamps.push(d);
+    if (!earliest || d < earliest) earliest = d;
+  });
+
+  // For "all", anchor on the earliest stamp; otherwise on the range start.
+  var start;
+  if (rangeDays != null) {
+    start = new Date(now);
+    start.setDate(start.getDate() - (rangeDays - 1));
+  } else {
+    start = earliest || now;
+  }
+
+  var totalDays = dayDiff(now, start) + 1;
+  // Cap "all time" series so we don't try to draw 10k points.
+  if (totalDays > 730) {
+    // Re-anchor start so the series has at most 730 days.
+    start = new Date(now);
+    start.setDate(start.getDate() - 729);
+    totalDays = 730;
+  }
+
+  var buckets = new Array(totalDays).fill(0);
+  stamps.forEach(function (d) {
+    var idx = dayDiff(d, start);
+    if (idx >= 0 && idx < totalDays) buckets[idx]++;
+  });
+
+  var series = [];
+  for (var i = 0; i < totalDays; i++) {
+    var dt = new Date(start);
+    dt.setDate(dt.getDate() + i);
+    series.push({ date: dt, value: buckets[i] });
+  }
+  return series;
+}
+
+// --- Canvas drawing helpers ----------------------------------------
+
+function setupCanvas(canvas) {
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas._logicalW = rect.width;
+  canvas._logicalH = rect.height;
+  return ctx;
+}
+
+function pickYTicks(maxVal) {
+  // Choose a "nice" step (1, 2, 5, 10, ...) so we end up with ~4-6 lines.
+  if (maxVal <= 0) return { step: 1, top: 4 };
+  var target = 5;
+  var raw = maxVal / target;
+  var pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  var mant = raw / pow;
+  var step;
+  if (mant <= 1) step = 1 * pow;
+  else if (mant <= 2) step = 2 * pow;
+  else if (mant <= 5) step = 5 * pow;
+  else step = 10 * pow;
+  var top = Math.ceil(maxVal / step) * step;
+  if (top === 0) top = step;
+  return { step: step, top: top };
+}
+
+// Draw an x/y axis frame and return the inner plot rect + the
+// hit-test info needed by the shared tooltip handler.
+function drawAxes(ctx, w, h, opts) {
+  // opts: { yMax, xLabels:[{idx,text}], plotPad }
+  var pad = opts.plotPad || { l: 38, r: 12, t: 10, b: 22 };
+  var plot = {
+    x: pad.l,
+    y: pad.t,
+    w: w - pad.l - pad.r,
+    h: h - pad.t - pad.b
+  };
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+  var ticks = pickYTicks(opts.yMax);
+  var yTop = ticks.top;
+  var step = ticks.step;
+
+  // Horizontal grid + y labels
+  ctx.strokeStyle = '#242424';
+  ctx.fillStyle = '#666';
+  ctx.lineWidth = 1;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (var v = 0; v <= yTop; v += step) {
+    var y = plot.y + plot.h - (v / yTop) * plot.h;
+    ctx.beginPath();
+    ctx.moveTo(plot.x, y);
+    ctx.lineTo(plot.x + plot.w, y);
+    ctx.stroke();
+    ctx.fillText(String(v), plot.x - 6, y);
+  }
+
+  // X labels (caller decides which indices to label)
+  if (opts.xLabels && opts.xLen > 1) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#666';
+    opts.xLabels.forEach(function (lbl) {
+      var fx = lbl.idx / (opts.xLen - 1);
+      var x = plot.x + fx * plot.w;
+      ctx.fillText(lbl.text, x, plot.y + plot.h + 6);
+    });
+  }
+
+  return { plot: plot, yTop: yTop };
+}
+
+// Pick ~6 evenly-spaced x label positions for a date series.
+function pickXDateLabels(series) {
+  if (!series.length) return [];
+  var labels = [];
+  var n = series.length;
+  var count = Math.min(6, n);
+  for (var i = 0; i < count; i++) {
+    var idx = Math.round(i * (n - 1) / Math.max(1, count - 1));
+    labels.push({ idx: idx, text: fmtShortDate(series[idx].date) });
+  }
+  return labels;
+}
+
+// --- Tooltip plumbing ----------------------------------------------
+// Caller binds one entry per canvas. On mousemove, we walk the bound
+// list, pick the nearest data point under the cursor, and update the
+// shared tooltip.
+
+var chartHandlers = [];   // [{canvas, plot, hit(x,y)->{label,value}|null}]
+
+function bindTooltip(canvas, plot, hit) {
+  chartHandlers.push({ canvas: canvas, plot: plot, hit: hit });
+  if (!canvas._ttBound) {
+    canvas._ttBound = true;
+    canvas.addEventListener('mousemove', onChartMove);
+    canvas.addEventListener('mouseleave', onChartLeave);
+  }
+}
+
+function clearHandlers() {
+  // Drop stale entries so re-renders don't accumulate them.
+  chartHandlers = chartHandlers.filter(function () { return false; });
+}
+
+function onChartMove(e) {
+  var c = e.currentTarget;
+  var rect = c.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var y = e.clientY - rect.top;
+  var handler = chartHandlers.find(function (h) { return h.canvas === c; });
+  if (!handler) return;
+  var hit = handler.hit(x, y);
+  if (!hit) {
+    tooltipEl.classList.remove('visible');
+    return;
+  }
+  tooltipEl.innerHTML =
+    '<span class="tt-label">' + hit.label + '</span>' +
+    '<span class="tt-value">' + hit.value + '</span>';
+  tooltipEl.style.left = e.clientX + 'px';
+  tooltipEl.style.top = e.clientY + 'px';
+  tooltipEl.classList.add('visible');
+}
+
+function onChartLeave() {
+  tooltipEl.classList.remove('visible');
+}
+
+// --- Chart: line over date series ----------------------------------
+
+function drawLineChart(canvasId, series, opts) {
+  var canvas = document.getElementById(canvasId);
+  var empty = document.getElementById(opts.emptyId);
+  var hasData = series.some(function (p) { return p.value > 0; });
+  empty.classList.toggle('hidden', hasData);
+
+  var ctx = setupCanvas(canvas);
+  var w = canvas._logicalW;
+  var h = canvas._logicalH;
+
+  if (!hasData) { ctx.clearRect(0, 0, w, h); return; }
+
+  var yMax = 0;
+  series.forEach(function (p) { if (p.value > yMax) yMax = p.value; });
+
+  var axis = drawAxes(ctx, w, h, {
+    yMax: yMax,
+    xLabels: pickXDateLabels(series),
+    xLen: series.length
+  });
+  var plot = axis.plot;
+  var yTop = axis.yTop;
+
+  // Filled area under the curve.
+  ctx.beginPath();
+  series.forEach(function (p, i) {
+    var fx = i / Math.max(1, series.length - 1);
+    var x = plot.x + fx * plot.w;
+    var y = plot.y + plot.h - (p.value / yTop) * plot.h;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo(plot.x + plot.w, plot.y + plot.h);
+  ctx.lineTo(plot.x, plot.y + plot.h);
+  ctx.closePath();
+  var grad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.h);
+  grad.addColorStop(0, opts.color + '55');
+  grad.addColorStop(1, opts.color + '08');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line on top.
+  ctx.beginPath();
+  series.forEach(function (p, i) {
+    var fx = i / Math.max(1, series.length - 1);
+    var x = plot.x + fx * plot.w;
+    var y = plot.y + plot.h - (p.value / yTop) * plot.h;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = opts.color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Dots — only when the series is short enough not to look messy.
+  if (series.length <= 60) {
+    ctx.fillStyle = opts.color;
+    series.forEach(function (p, i) {
+      if (p.value === 0) return;
+      var fx = i / Math.max(1, series.length - 1);
+      var x = plot.x + fx * plot.w;
+      var y = plot.y + plot.h - (p.value / yTop) * plot.h;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // Tooltip hit-test: snap to nearest x sample inside the plot.
+  bindTooltip(canvas, plot, function (mx, my) {
+    if (mx < plot.x || mx > plot.x + plot.w || my < plot.y || my > plot.y + plot.h) return null;
+    var fx = (mx - plot.x) / plot.w;
+    var i = Math.round(fx * (series.length - 1));
+    if (i < 0 || i >= series.length) return null;
+    var p = series[i];
+    return { label: fmtLongDate(p.date), value: p.value + ' ' + (opts.unit || '') };
+  });
+}
+
+// --- Chart: vertical bar chart with category labels ----------------
+
+function drawBarChart(canvasId, items, opts) {
+  // items: [{label, value, color}]
+  var canvas = document.getElementById(canvasId);
+  var empty = document.getElementById(opts.emptyId);
+  var hasData = items.some(function (it) { return it.value > 0; });
+  empty.classList.toggle('hidden', hasData);
+
+  var ctx = setupCanvas(canvas);
+  var w = canvas._logicalW;
+  var h = canvas._logicalH;
+
+  if (!hasData) { ctx.clearRect(0, 0, w, h); return; }
+
+  var yMax = 0;
+  items.forEach(function (it) { if (it.value > yMax) yMax = it.value; });
+
+  // Build x labels (one per bar — but skip every other if there are too many).
+  var labelStep = items.length > 14 ? Math.ceil(items.length / 10) : 1;
+  var xLabels = items.map(function (it, i) {
+    return { idx: i, text: (i % labelStep === 0) ? it.label : '' };
+  });
+
+  var axis = drawAxes(ctx, w, h, {
+    yMax: yMax,
+    xLabels: xLabels,
+    xLen: items.length,
+    plotPad: { l: 38, r: 12, t: 10, b: 28 }
+  });
+  var plot = axis.plot;
+  var yTop = axis.yTop;
+
+  var barW = plot.w / items.length * 0.7;
+  var bars = [];
+  items.forEach(function (it, i) {
+    var cx = plot.x + (i + 0.5) * (plot.w / items.length);
+    var bh = (it.value / yTop) * plot.h;
+    var bx = cx - barW / 2;
+    var by = plot.y + plot.h - bh;
+    ctx.fillStyle = it.color || opts.color || '#4a9eff';
+    ctx.fillRect(bx, by, barW, bh);
+    bars.push({ x: bx, y: by, w: barW, h: bh, item: it });
+  });
+
+  bindTooltip(canvas, plot, function (mx, my) {
+    for (var i = 0; i < bars.length; i++) {
+      var b = bars[i];
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= plot.y + plot.h) {
+        return { label: b.item.tooltipLabel || b.item.label, value: b.item.value + ' ' + (opts.unit || '') };
+      }
+    }
+    return null;
+  });
+}
+
+// --- Specific stat builders ----------------------------------------
+
+function buildMaturity(cards) {
+  var settings = getSrsSettings({ cards: cards });
+  var buckets = { New: 0, Learning: 0, Young: 0, Mature: 0, Leech: 0 };
+  cards.forEach(function (c) {
+    var lapses = c.lapses || 0;
+    var leech = c.isLeech || lapses >= settings.leechThreshold;
+    if (leech) { buckets.Leech++; return; }
+    if (isNew(c)) { buckets.New++; return; }
+    if (isLearning(c)) { buckets.Learning++; return; }
+    if ((c.interval || 0) >= 21) { buckets.Mature++; return; }
+    buckets.Young++;
+  });
+  return [
+    { label: 'New', value: buckets.New, color: '#4a9eff' },
+    { label: 'Learning', value: buckets.Learning, color: '#e8a23a' },
+    { label: 'Young', value: buckets.Young, color: '#7ec0ff' },
+    { label: 'Mature', value: buckets.Mature, color: '#2ecc71' },
+    { label: 'Leech', value: buckets.Leech, color: '#e55' }
+  ];
+}
+
+// Log-style buckets so a power-law-ish interval distribution still
+// has something interesting to show on the right tail.
+function buildIntervalHist(cards) {
+  var ranges = [
+    { label: '1d',     min: 1,    max: 2 },
+    { label: '2-3d',   min: 2,    max: 4 },
+    { label: '4-7d',   min: 4,    max: 8 },
+    { label: '1-2w',   min: 8,    max: 15 },
+    { label: '2-4w',   min: 15,   max: 31 },
+    { label: '1-3mo',  min: 31,   max: 91 },
+    { label: '3-6mo',  min: 91,   max: 181 },
+    { label: '6-12mo', min: 181,  max: 366 },
+    { label: '1y+',    min: 366,  max: Infinity }
+  ];
+  var counts = ranges.map(function () { return 0; });
+  cards.forEach(function (c) {
+    if (isLearning(c) || isNew(c)) return;
+    var iv = c.interval || 0;
+    for (var i = 0; i < ranges.length; i++) {
+      if (iv >= ranges[i].min && iv < ranges[i].max) { counts[i]++; break; }
+    }
+  });
+  return ranges.map(function (r, i) {
+    return {
+      label: r.label,
+      value: counts[i],
+      color: '#4a9eff',
+      tooltipLabel: r.label + ' interval'
+    };
+  });
+}
+
+function buildEaseHist(cards) {
+  // 0.1-wide buckets from 1.3 to 3.0.
+  var min = 1.3;
+  var max = 3.0;
+  var step = 0.1;
+  var n = Math.round((max - min) / step) + 1;
+  var counts = new Array(n).fill(0);
+  cards.forEach(function (c) {
+    if (isNew(c) || isLearning(c)) return;
+    var ef = c.easeFactor || 2.5;
+    if (ef < min) ef = min;
+    if (ef > max) ef = max;
+    var idx = Math.min(n - 1, Math.max(0, Math.round((ef - min) / step)));
+    counts[idx]++;
+  });
+  return counts.map(function (v, i) {
+    var ef = (min + i * step);
+    return {
+      label: ef.toFixed(1),
+      value: v,
+      color: '#e8a040',
+      tooltipLabel: 'Ease ' + ef.toFixed(2)
+    };
+  });
+}
+
+function buildCumulativeSeries(cards) {
+  // Sort all `created` timestamps, then build a daily cumulative series
+  // anchored on the same range/window logic as dailySeries().
+  var stamps = cards
+    .map(function (c) { return c.created ? startOfDay(new Date(c.created)) : null; })
+    .filter(function (d) { return d && !isNaN(d); })
+    .sort(function (a, b) { return a - b; });
+
+  if (!stamps.length) return [];
+
+  var now = startOfDay(new Date());
+  var earliest = stamps[0];
+  var rangeDays = currentRange === 'all' ? null : currentRange;
+  var start;
+  if (rangeDays != null) {
+    start = new Date(now);
+    start.setDate(start.getDate() - (rangeDays - 1));
+    if (start < earliest) start = earliest;
+  } else {
+    start = earliest;
+  }
+
+  var totalDays = dayDiff(now, start) + 1;
+  if (totalDays > 730) {
+    start = new Date(now);
+    start.setDate(start.getDate() - 729);
+    totalDays = 730;
+  }
+
+  // Count of cards created strictly before `start` — the running base.
+  var base = 0;
+  for (var i = 0; i < stamps.length; i++) {
+    if (stamps[i] < start) base++;
+    else break;
+  }
+
+  // Per-day deltas inside the window.
+  var delta = new Array(totalDays).fill(0);
+  for (var i = 0; i < stamps.length; i++) {
+    var idx = dayDiff(stamps[i], start);
+    if (idx >= 0 && idx < totalDays) delta[idx]++;
+  }
+
+  var running = base;
+  var series = [];
+  for (var i = 0; i < totalDays; i++) {
+    running += delta[i];
+    var dt = new Date(start);
+    dt.setDate(dt.getDate() + i);
+    series.push({ date: dt, value: running });
+  }
+  return series;
+}
+
+function computeStreak(cards) {
+  // Longest run of consecutive days ending today that has any review activity.
+  var days = {};
+  cards.forEach(function (c) {
+    if (!c.lastReview) return;
+    var d = startOfDay(new Date(c.lastReview));
+    if (isNaN(d)) return;
+    days[d.getTime()] = true;
+  });
+  var streak = 0;
+  var cursor = startOfDay(new Date());
+  while (days[cursor.getTime()]) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+// --- Render everything ---------------------------------------------
+
+function renderAll() {
+  // Reset tooltip handlers so old closures don't fire after re-render.
+  clearHandlers();
+  tooltipEl.classList.remove('visible');
+
+  var cards = deckCards;
+
+  // Headline cards.
+  document.getElementById('hsTotal').textContent = cards.length;
+
+  var reviewSeries = dailySeries(cards, 'lastReview');
+  var createdSeries = dailySeries(cards, 'created');
+
+  var reviewedInRange = reviewSeries.reduce(function (s, p) { return s + p.value; }, 0);
+  var createdInRange = createdSeries.reduce(function (s, p) { return s + p.value; }, 0);
+  document.getElementById('hsReviewed').textContent = reviewedInRange;
+  document.getElementById('hsCreated').textContent = createdInRange;
+
+  var mastered = cards.filter(function (c) {
+    return !isLearning(c) && (c.interval || 0) >= 21;
+  }).length;
+  document.getElementById('hsMastered').textContent = mastered;
+
+  var graduated = cards.filter(function (c) { return !isLearning(c) && !isNew(c); });
+  var avgEase = graduated.length
+    ? graduated.reduce(function (s, c) { return s + (c.easeFactor || 2.5); }, 0) / graduated.length
+    : 0;
+  document.getElementById('hsAvgEase').textContent = avgEase.toFixed(2);
+
+  document.getElementById('hsStreak').textContent = computeStreak(cards);
+
+  // Range subtitle (e.g. "Apr 11 – May 10, 2026")
+  var rangeSub = document.getElementById('rangeSub');
+  if (reviewSeries.length) {
+    var first = reviewSeries[0].date;
+    var last = reviewSeries[reviewSeries.length - 1].date;
+    rangeSub.textContent = fmtShortDate(first) + ' → ' + fmtShortDate(last) + ', ' + last.getFullYear();
+  } else {
+    rangeSub.textContent = '';
+  }
+
+  // Line charts.
+  drawLineChart('chartReviews', reviewSeries, {
+    color: '#4a9eff',
+    unit: 'reviews',
+    emptyId: 'emptyReviews'
+  });
+  drawLineChart('chartCreated', createdSeries, {
+    color: '#e8c840',
+    unit: 'added',
+    emptyId: 'emptyCreated'
+  });
+  drawLineChart('chartCumulative', buildCumulativeSeries(cards), {
+    color: '#2ecc71',
+    unit: 'cards',
+    emptyId: 'emptyCumulative'
+  });
+
+  // Bar charts.
+  drawBarChart('chartMaturity', buildMaturity(cards), {
+    unit: 'cards',
+    emptyId: 'emptyMaturity'
+  });
+  drawBarChart('chartInterval', buildIntervalHist(cards), {
+    unit: 'cards',
+    emptyId: 'emptyInterval'
+  });
+  drawBarChart('chartEase', buildEaseHist(cards), {
+    unit: 'cards',
+    emptyId: 'emptyEase'
+  });
+}
+
+// --- Range buttons --------------------------------------------------
+
+document.querySelectorAll('.range-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.range-btn').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    var v = btn.getAttribute('data-range');
+    currentRange = v === 'all' ? 'all' : +v;
+    renderAll();
+  });
+});
+
+// Re-render on resize so canvases pick up the new DPR-scaled size.
+var resizeTimer = null;
+window.addEventListener('resize', function () {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderAll, 120);
+});
+
+// --- Data load ------------------------------------------------------
+
+function updateBanner() {
+  var banner = document.getElementById('settingsBanner');
+  var btn = document.getElementById('settingsBtn');
+  if (isConfigured()) {
+    banner.classList.add('hidden');
+    btn.textContent = 'Settings ✓';
+    btn.classList.add('btn-configured');
+    loadStatsData();
+  } else {
+    banner.classList.remove('hidden');
+    btn.textContent = 'Settings';
+    btn.classList.remove('btn-configured');
+    deckCards = [];
+    renderAll();
+  }
+}
+
+function loadStatsData() {
+  loadDeck().then(function (data) {
+    deckCards = data.cards || [];
+    renderAll();
+  }).catch(function (err) {
+    console.error('Failed to load deck:', err);
+    showToast('Failed to load deck: ' + err.message, 'error');
+  });
+}
+
+function onSettingsChanged() { updateBanner(); }
+
+updateBanner();
+</script>
+</body>
+</html>

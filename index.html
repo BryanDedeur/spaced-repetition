@@ -15,6 +15,8 @@
       <a href="index.html" class="active">Home</a>
       <a href="manage.html">Manage</a>
       <a href="study.html">Study</a>
+      <a href="graph.html">Graph</a>
+      <a href="stats.html">Stats</a>
     </div>
     <div class="nav-right">
       <button class="btn btn-sm" id="settingsBtn" onclick="toggleSettingsModal()">Settings</button>
@@ -43,12 +45,20 @@
         <div class="stat-label">Due Now</div>
       </div>
       <div class="stat-card">
+        <div class="stat-value" id="statLearning" style="color:#e8a23a">0</div>
+        <div class="stat-label">Learning</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-value" id="statNew" style="color:#4a9eff">0</div>
-        <div class="stat-label">New Cards</div>
+        <div class="stat-label">New Today</div>
       </div>
       <div class="stat-card">
         <div class="stat-value" id="statMastered" style="color:#2ecc71">0</div>
         <div class="stat-label">Mastered (21d+)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statLeech" style="color:#e55">0</div>
+        <div class="stat-label">Leeches</div>
       </div>
     </div>
   </div>
@@ -144,18 +154,25 @@
   function loadStats() {
     loadDeck().then(function (data) {
       var cards = data.cards || [];
-      var now = new Date();
-      var due = 0, newCount = 0, mastered = 0;
+      var due = 0, learning = 0, mastered = 0, leech = 0;
       cards.forEach(function (c) {
-        if (isNew(c)) newCount++;
         if (isDue(c)) due++;
-        if (c.interval >= 21) mastered++;
+        if (isLearning(c) && !isNew(c)) learning++;
+        if ((c.interval || 0) >= 21 && !isLearning(c)) mastered++;
+        if (c.isLeech || (c.lapses || 0) >= getSrsSettings(data).leechThreshold) leech++;
       });
+      // "New Today" = brand-new cards still inside today's budget
+      var newRemaining = Math.min(
+        cards.filter(function (c) { return isNew(c) && isDue(c); }).length,
+        getNewBudget(data)
+      );
 
       document.getElementById('statTotal').textContent = cards.length;
       document.getElementById('statDue').textContent = due;
-      document.getElementById('statNew').textContent = newCount;
+      document.getElementById('statLearning').textContent = learning;
+      document.getElementById('statNew').textContent = newRemaining;
       document.getElementById('statMastered').textContent = mastered;
+      document.getElementById('statLeech').textContent = leech;
       document.getElementById('statsSection').classList.remove('hidden');
     }).catch(function (err) {
       console.error('Failed to load stats:', err);

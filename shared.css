@@ -591,24 +591,122 @@ a:hover { text-decoration: underline; }
   margin: 1.5rem 0;
 }
 
-/* Rating buttons */
+/* Rating buttons — large color-coded cards with keyboard hint chip */
 .rating-buttons {
-  display: flex;
-  gap: .5rem;
-  justify-content: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: .6rem;
+  max-width: 720px;
+  margin: 1rem auto 0;
 }
 
-.rating-buttons .btn {
-  min-width: 80px;
+.rating-btn {
+  display: flex !important;
   flex-direction: column;
-  padding: .6rem 1rem;
+  align-items: center;
+  justify-content: center;
+  gap: .25rem;
+  padding: 1rem .6rem !important;
+  min-height: 92px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  position: relative;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .08s ease, background .15s, border-color .15s, box-shadow .15s;
 }
 
-.rating-buttons .btn .rating-interval {
-  font-size: .65rem;
-  opacity: .7;
-  margin-top: .15rem;
+.rating-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+}
+
+.rating-btn:active,
+.rating-btn.is-pressed {
+  transform: translateY(1px) scale(.98);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .35);
+}
+
+.rating-btn .rating-kbd {
+  position: absolute;
+  top: .4rem;
+  left: .5rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 .35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .7rem;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(0, 0, 0, .45);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 4px;
+  letter-spacing: 0;
+  opacity: .85;
+}
+
+.rating-btn .rating-label {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: .3px;
+}
+
+.rating-btn .rating-interval {
+  font-size: .72rem;
+  font-weight: 400;
+  opacity: .75;
+}
+
+/* Per-rating palette — strong, distinct, accessible on dark bg */
+.rating-btn-again {
+  background: #4a1f1f;
+  color: #ff8080;
+  border-color: #5a2828;
+}
+.rating-btn-again:hover:not(:disabled) {
+  background: #5a2424;
+  border-color: #ff6060;
+}
+
+.rating-btn-hard {
+  background: #3a2a10;
+  color: #e8c840;
+  border-color: #4a3818;
+}
+.rating-btn-hard:hover:not(:disabled) {
+  background: #4a3416;
+  border-color: #e8c840;
+}
+
+.rating-btn-good {
+  background: #1f4030;
+  color: #4ee08a;
+  border-color: #2a5238;
+}
+.rating-btn-good:hover:not(:disabled) {
+  background: #28553a;
+  border-color: #4ee08a;
+}
+
+.rating-btn-easy {
+  background: #1f3450;
+  color: #6bb3ff;
+  border-color: #284060;
+}
+.rating-btn-easy:hover:not(:disabled) {
+  background: #2a4470;
+  border-color: #6bb3ff;
+}
+
+@media (max-width: 600px) {
+  .rating-buttons {
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 100%;
+  }
+  .rating-btn { min-height: 76px; }
 }
 
 /* Tag filter bar */
@@ -662,6 +760,5 @@ footer a:hover { text-decoration: underline; }
   .form-row { flex-direction: column; }
   .nav-links { display: none; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .rating-buttons { flex-direction: column; align-items: stretch; }
-  .rating-buttons .btn { min-width: unset; }
+  /* rating-buttons mobile rules live with their primary block above */
 }
