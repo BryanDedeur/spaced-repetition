@@ -172,6 +172,10 @@
       <label>Centering</label>
       <input type="range" id="ctrlCenter" min="0" max="100" step="1" value="20">
     </div>
+    <div class="control-row">
+      <label>Speed</label>
+      <input type="range" id="ctrlSpeed" min="0.5" max="10" step="0.5" value="3">
+    </div>
     <div class="control-row" style="justify-content:flex-end">
       <button class="btn btn-sm btn-secondary" onclick="resetGraphView()">Reset view</button>
     </div>
@@ -289,8 +293,18 @@ var pressInfo = null;          // { x, y, t, node } | null
 var params = {
   repulsion: 800,
   linkStrength: 30 / 1000,   // scaled below
-  centering: 20 / 5000
+  centering: 20 / 5000,
+  speed: 3                   // simulation-time multiplier
 };
+
+// Damping rate per simulated second. Tuned so a single 1/60s step
+// matches the old per-frame factor of 0.85 (ln(0.85) / (1/60) ≈ 9.74).
+// Using exp(-rate*dt) means the same total damping is applied no
+// matter how many substeps we cram into one real frame.
+var DAMP_RATE = 9.74;
+// Largest integration step we'll allow. Springs get stiffer with edge
+// weight, so we cap dt to stay stable when params.speed is high.
+var MAX_SUB_DT = 1 / 120;
 
 // =============================================================
 // Build nodes & edges from cards
@@ -426,7 +440,7 @@ function step(dt) {
 
   // Centering & integrate
   var c = params.centering;
-  var damp = 0.85;
+  var damp = Math.exp(-DAMP_RATE * dt);
   for (var i = 0; i < nodes.length; i++) {
     var n = nodes[i];
     if (n === (dragging && dragging.node)) {
@@ -635,9 +649,15 @@ function draw() {
 
 var lastFrame = performance.now();
 function tick(now) {
-  var dt = Math.min(0.05, (now - lastFrame) / 1000);
+  var frameDt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
-  step(dt);
+  // Scale how much simulation time elapses per real frame, then break
+  // it into MAX_SUB_DT-sized chunks so stiff springs don't explode at
+  // high speeds.
+  var simDt = frameDt * params.speed;
+  var nSub = Math.max(1, Math.ceil(simDt / MAX_SUB_DT));
+  var subDt = simDt / nSub;
+  for (var s = 0; s < nSub; s++) step(subDt);
   draw();
   requestAnimationFrame(tick);
 }
@@ -811,6 +831,9 @@ document.getElementById('ctrlLink').addEventListener('input', function (e) {
 });
 document.getElementById('ctrlCenter').addEventListener('input', function (e) {
   params.centering = +e.target.value / 5000;
+});
+document.getElementById('ctrlSpeed').addEventListener('input', function (e) {
+  params.speed = +e.target.value;
 });
 
 function loadGraphData() {
