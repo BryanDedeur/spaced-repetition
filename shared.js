@@ -97,7 +97,6 @@ function saveSettings() {
 
   // Reset cached SHAs since settings changed
   _fileSha = null;
-  _sketchShas = {};
 
   toggleSettingsModal();
   if (typeof updateBanner === 'function') updateBanner();
@@ -115,7 +114,6 @@ function clearSettings() {
   document.getElementById('repoBranchInput').value = '';
   document.getElementById('repoPathInput').value = '';
   _fileSha = null;
-  _sketchShas = {};
   toggleSettingsModal();
   if (typeof updateBanner === 'function') updateBanner();
   if (typeof onSettingsChanged === 'function') onSettingsChanged();
@@ -268,72 +266,6 @@ function saveDeck(data, _retries) {
       return loadDeck().then(function (remote) {
         var merged = mergeDecks(data, remote);
         return saveDeck(merged, _retries - 1);
-      });
-    }
-    throw err;
-  });
-}
-
-// --- Sketch (per-card PNG) persistence ---
-// Sketches live next to the deck JSON in a `sketches/` folder so a single
-// repo holds the full study state. Each card's drawing is one PNG keyed by
-// card id. We cache the file SHA per path so subsequent updates don't have
-// to re-GET; on conflict we drop the cache and refetch.
-
-var _sketchShas = {}; // path -> sha
-
-function getSketchDir() {
-  var path = getRepoPath() || 'spaced_repetition_data.json';
-  var idx = path.lastIndexOf('/');
-  var dir = idx >= 0 ? path.substring(0, idx) : '';
-  return (dir ? dir + '/' : '') + 'sketches';
-}
-
-function getSketchPath(cardId) {
-  return getSketchDir() + '/' + cardId + '.png';
-}
-
-// Returns a data: URL for the existing sketch, or null if there isn't one.
-function loadSketch(cardId) {
-  if (!isConfigured()) return Promise.resolve(null);
-  var path = getSketchPath(cardId);
-  return ghApi(
-    'GET',
-    '/repos/' + getRepoOwner() + '/' + getRepoName() + '/contents/' +
-      path + '?ref=' + encodeURIComponent(getRepoBranch())
-  ).then(function (data) {
-    if (!data) { delete _sketchShas[path]; return null; }
-    _sketchShas[path] = data.sha;
-    return 'data:image/png;base64,' + (data.content || '').replace(/\n/g, '');
-  });
-}
-
-// base64Png must be the raw base64 payload (no data: prefix).
-function saveSketch(cardId, base64Png, _retries) {
-  if (!isConfigured()) return Promise.reject(new Error('GitHub repo not configured'));
-  if (_retries == null) _retries = 2;
-
-  var path = getSketchPath(cardId);
-  var body = {
-    message: 'Update sketch for card ' + cardId,
-    content: base64Png,
-    branch: getRepoBranch()
-  };
-  if (_sketchShas[path]) body.sha = _sketchShas[path];
-
-  return ghApi(
-    'PUT',
-    '/repos/' + getRepoOwner() + '/' + getRepoName() + '/contents/' + path,
-    body
-  ).then(function (result) {
-    if (result && result.content) _sketchShas[path] = result.content.sha;
-    return result;
-  }).catch(function (err) {
-    // 409 / 422 = stale SHA — drop cache, refetch, try once more.
-    if ((err.status === 409 || err.status === 422) && _retries > 0) {
-      delete _sketchShas[path];
-      return loadSketch(cardId).then(function () {
-        return saveSketch(cardId, base64Png, _retries - 1);
       });
     }
     throw err;
