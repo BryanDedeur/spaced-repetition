@@ -378,12 +378,119 @@ function buildGraph(cards) {
     edges.push({ a: parts[0], b: parts[1], weight: w, rest: rest });
   });
 
+  assignNodeColors();
+
   // Update overlay stats
   document.getElementById('statTags').textContent = nodes.length;
   document.getElementById('statLinks').textContent = edges.length;
   document.getElementById('statCards').textContent = cards.length;
 
   document.getElementById('graphEmpty').classList.toggle('hidden', nodes.length > 0);
+}
+
+// =============================================================
+// Node coloring
+// =============================================================
+//
+// Walk nodes from largest to smallest. For each node:
+//   - if none of its already-colored neighbors have a color yet, seed it
+//     with a fresh random vivid hue;
+//   - otherwise "consume" the colored neighbors: a single colored neighbor
+//     hands its color straight down, and multiple colored neighbors get
+//     blended (averaged in RGB). This makes connected clusters share a
+//     family of related hues while distinct clusters stay distinct.
+
+function hslToRgb(h, s, l) {
+  // h in [0,360), s/l in [0,1]
+  var c = (1 - Math.abs(2 * l - 1)) * s;
+  var hp = h / 60;
+  var x = c * (1 - Math.abs((hp % 2) - 1));
+  var r = 0, g = 0, b = 0;
+  if (hp < 1) { r = c; g = x; }
+  else if (hp < 2) { r = x; g = c; }
+  else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; }
+  else if (hp < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  var m = l - c / 2;
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255)
+  };
+}
+
+function randomVividColor() {
+  // Bright, saturated colors so nodes pop against the dark background.
+  var h = Math.random() * 360;
+  var s = 0.65 + Math.random() * 0.25;   // 65–90%
+  var l = 0.55 + Math.random() * 0.12;   // 55–67%
+  return hslToRgb(h, s, l);
+}
+
+var DEFAULT_NODE_COLOR = { r: 122, g: 167, b: 220 };
+
+function assignNodeColors() {
+  // Adjacency list keyed by node id.
+  var adj = {};
+  nodes.forEach(function (n) { adj[n.id] = []; n.color = null; });
+  edges.forEach(function (e) {
+    if (adj[e.a] && adj[e.b]) {
+      adj[e.a].push(e.b);
+      adj[e.b].push(e.a);
+    }
+  });
+
+  // Largest weight first so the busiest tags seed the palette.
+  var order = nodes.slice().sort(function (a, b) { return b.weight - a.weight; });
+
+  order.forEach(function (n) {
+    var colored = adj[n.id]
+      .map(function (id) { return nodeById[id]; })
+      .filter(function (m) { return m && m.color; });
+
+    if (!colored.length) {
+      n.color = randomVividColor();
+      return;
+    }
+
+    // Consume / blend the colored neighbors' colors.
+    var r = 0, g = 0, b = 0;
+    colored.forEach(function (m) { r += m.color.r; g += m.color.g; b += m.color.b; });
+    var k = colored.length;
+    n.color = {
+      r: Math.round(r / k),
+      g: Math.round(g / k),
+      b: Math.round(b / k)
+    };
+  });
+}
+
+function nodeColor(n) {
+  return (n && n.color) || DEFAULT_NODE_COLOR;
+}
+
+function rgbStr(c, alpha) {
+  if (alpha == null) return 'rgb(' + c.r + ',' + c.g + ',' + c.b + ')';
+  return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + alpha + ')';
+}
+
+// Mix a color toward white by t (0..1) — used to brighten on hover/select.
+function lighten(c, t) {
+  return {
+    r: Math.round(c.r + (255 - c.r) * t),
+    g: Math.round(c.g + (255 - c.g) * t),
+    b: Math.round(c.b + (255 - c.b) * t)
+  };
+}
+
+// Average two colors — used to tint edges from their endpoints.
+function blend(c1, c2) {
+  return {
+    r: Math.round((c1.r + c2.r) / 2),
+    g: Math.round((c1.g + c2.g) / 2),
+    b: Math.round((c1.b + c2.b) / 2)
+  };
 }
 
 // =============================================================
@@ -517,18 +624,19 @@ function clearSelection() {
 // Draw a single edge. `state` is 'highlight' | 'normal' | 'dim'.
 function drawEdge(e, a, b, state) {
   var alpha, width, color;
+  var tint = blend(nodeColor(a), nodeColor(b));
   if (state === 'dim') {
-    alpha = 0.04;
+    alpha = 0.05;
     width = 0.4 + Math.sqrt(e.weight) * 0.3;
-    color = 'rgba(120,140,180,' + alpha + ')';
+    color = rgbStr(tint, alpha);
   } else if (state === 'highlight') {
     alpha = 0.85;
     width = 1.4 + Math.sqrt(e.weight) * 0.7;
-    color = 'rgba(120,180,255,' + alpha + ')';
+    color = rgbStr(lighten(tint, 0.2), alpha);
   } else {
-    alpha = 0.15 + Math.min(0.35, e.weight * 0.05);
+    alpha = 0.18 + Math.min(0.4, e.weight * 0.05);
     width = 0.5 + Math.sqrt(e.weight) * 0.4;
-    color = 'rgba(120,140,180,' + alpha + ')';
+    color = rgbStr(tint, alpha);
   }
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
@@ -542,24 +650,25 @@ function drawEdge(e, a, b, state) {
 function drawNode(n, state) {
   var fill, stroke, strokeWidth, labelAlpha;
   var labelBase = Math.min(1, view.scale * 1.2 - 0.1);
+  var col = nodeColor(n);
 
   if (state === 'dim') {
-    fill = 'rgba(122,167,220,0.18)';
+    fill = rgbStr(col, 0.18);
     stroke = 'rgba(255,255,255,0.06)';
     strokeWidth = 1;
     labelAlpha = labelBase * 0.2;
   } else if (state === 'selected') {
-    fill = '#4a9eff';
+    fill = rgbStr(lighten(col, 0.15));
     stroke = '#fff';
     strokeWidth = 2.5;
     labelAlpha = 1;
   } else if (state === 'neighbor') {
-    fill = '#7ec0ff';
+    fill = rgbStr(lighten(col, 0.1));
     stroke = 'rgba(255,255,255,0.55)';
     strokeWidth = 1.5;
     labelAlpha = 1;
   } else {
-    fill = (hoverNode === n) ? '#4a9eff' : '#7aa7dc';
+    fill = (hoverNode === n) ? rgbStr(lighten(col, 0.25)) : rgbStr(col);
     stroke = (hoverNode === n) ? '#fff' : 'rgba(255,255,255,.25)';
     strokeWidth = (hoverNode === n) ? 2 : 1;
     labelAlpha = (hoverNode === n) ? 1 : labelBase;
