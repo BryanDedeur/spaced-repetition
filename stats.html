@@ -123,6 +123,51 @@
       z-index: 200;
     }
     .chart-tooltip.visible { opacity: 1; }
+
+    /* Top tags table */
+    .tags-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+    .tags-table th {
+      text-align: left;
+      font-weight: 600;
+      color: #888;
+      font-size: .68rem;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      padding: .4rem .6rem;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .tags-table td {
+      padding: .45rem .6rem;
+      border-bottom: 1px solid #202020;
+      color: #ddd;
+    }
+    .tags-table tbody tr:last-child td { border-bottom: none; }
+    .tags-table tbody tr:hover td { background: #1f1f1f; }
+    .tags-table .rank { color: #666; font-variant-numeric: tabular-nums; }
+    .tags-table .tag-name {
+      color: #c9b3f0;
+      font-weight: 500;
+    }
+    .tags-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .tags-table .share { color: #888; }
+    .tags-table .bar-cell { padding: 0 .6rem; }
+    .tags-table .bar-track {
+      position: relative;
+      height: 6px;
+      background: #222;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .tags-table .bar-fill {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      background: #9b7ede;
+      border-radius: 3px;
+    }
     .chart-tooltip .tt-label { color: #888; }
     .chart-tooltip .tt-value { color: #fff; font-weight: 600; margin-left: .4rem; }
   </style>
@@ -272,9 +317,19 @@
         <h3>Top knowledge tags</h3>
         <span class="chart-sub">most common tags across all cards</span>
       </div>
-      <div class="chart-canvas-wrap tall">
-        <canvas id="chartTags"></canvas>
-        <div class="chart-empty hidden" id="emptyTags">No tagged cards yet</div>
+      <div id="tagsTableWrap">
+        <table class="tags-table" id="tagsTable">
+          <thead>
+            <tr>
+              <th style="width:2.5rem">#</th>
+              <th>Tag</th>
+              <th style="width:5rem;text-align:right">Cards</th>
+              <th style="width:5rem;text-align:right">Share</th>
+            </tr>
+          </thead>
+          <tbody id="tagsTableBody"></tbody>
+        </table>
+        <div class="chart-empty hidden" id="emptyTags" style="position:static;padding:1.5rem 0">No tagged cards yet</div>
       </div>
     </div>
 
@@ -759,11 +814,13 @@ function buildIntervalHist(cards) {
   });
 }
 
-// Count tag occurrences across every card, return the top N as bars.
+// Count tag occurrences across every card, return the top N sorted desc.
 function buildTopTags(cards, topN) {
   var counts = {};
+  var totalTagged = 0;
   cards.forEach(function (c) {
-    if (!Array.isArray(c.tags)) return;
+    if (!Array.isArray(c.tags) || !c.tags.length) return;
+    totalTagged++;
     c.tags.forEach(function (t) {
       if (!t) return;
       counts[t] = (counts[t] || 0) + 1;
@@ -771,17 +828,49 @@ function buildTopTags(cards, topN) {
   });
   var sorted = Object.keys(counts)
     .map(function (t) { return { tag: t, count: counts[t] }; })
-    .sort(function (a, b) { return b.count - a.count; })
+    .sort(function (a, b) { return b.count - a.count || a.tag.localeCompare(b.tag); })
     .slice(0, topN || 15);
-  return sorted.map(function (it) {
-    var short = it.tag.length > 12 ? it.tag.slice(0, 11) + '…' : it.tag;
-    return {
-      label: short,
-      value: it.count,
-      color: '#9b7ede',
-      tooltipLabel: it.tag
-    };
+  return { rows: sorted, totalTagged: totalTagged };
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
   });
+}
+
+// Render the top-tags table. Share is the % of tagged cards carrying the tag;
+// the inline bar is scaled relative to the most common tag.
+function renderTopTags(cards) {
+  var data = buildTopTags(cards, 15);
+  var rows = data.rows;
+  var body = document.getElementById('tagsTableBody');
+  var empty = document.getElementById('emptyTags');
+  var table = document.getElementById('tagsTable');
+
+  if (!rows.length) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    table.classList.add('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  table.classList.remove('hidden');
+
+  var max = rows[0].count;
+  body.innerHTML = rows.map(function (r, i) {
+    var pct = data.totalTagged ? Math.round(r.count / data.totalTagged * 100) : 0;
+    var barW = Math.round(r.count / max * 100);
+    return '<tr>' +
+      '<td class="rank">' + (i + 1) + '</td>' +
+      '<td>' +
+        '<div class="tag-name">' + escapeHtml(r.tag) + '</div>' +
+        '<div class="bar-track" style="margin-top:.3rem"><div class="bar-fill" style="width:' + barW + '%"></div></div>' +
+      '</td>' +
+      '<td class="num">' + r.count + '</td>' +
+      '<td class="num share">' + pct + '%</td>' +
+    '</tr>';
+  }).join('');
 }
 
 function buildEaseHist(cards) {
@@ -955,10 +1044,7 @@ function renderAll() {
     unit: 'cards',
     emptyId: 'emptyEase'
   });
-  drawBarChart('chartTags', buildTopTags(cards, 15), {
-    unit: 'cards',
-    emptyId: 'emptyTags'
-  });
+  renderTopTags(cards);
 }
 
 // --- Range buttons --------------------------------------------------
