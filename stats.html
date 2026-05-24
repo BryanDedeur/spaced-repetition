@@ -267,6 +267,17 @@
       </div>
     </div>
 
+    <div class="chart-panel full">
+      <div class="chart-header">
+        <h3>Top knowledge tags</h3>
+        <span class="chart-sub">most common tags across all cards</span>
+      </div>
+      <div class="chart-canvas-wrap tall">
+        <canvas id="chartTags"></canvas>
+        <div class="chart-empty hidden" id="emptyTags">No tagged cards yet</div>
+      </div>
+    </div>
+
   </div>
 
   <p style="color:#555;font-size:.75rem;margin:.5rem 0 2rem;text-align:center;line-height:1.5">
@@ -748,6 +759,31 @@ function buildIntervalHist(cards) {
   });
 }
 
+// Count tag occurrences across every card, return the top N as bars.
+function buildTopTags(cards, topN) {
+  var counts = {};
+  cards.forEach(function (c) {
+    if (!Array.isArray(c.tags)) return;
+    c.tags.forEach(function (t) {
+      if (!t) return;
+      counts[t] = (counts[t] || 0) + 1;
+    });
+  });
+  var sorted = Object.keys(counts)
+    .map(function (t) { return { tag: t, count: counts[t] }; })
+    .sort(function (a, b) { return b.count - a.count; })
+    .slice(0, topN || 15);
+  return sorted.map(function (it) {
+    var short = it.tag.length > 12 ? it.tag.slice(0, 11) + '…' : it.tag;
+    return {
+      label: short,
+      value: it.count,
+      color: '#9b7ede',
+      tooltipLabel: it.tag
+    };
+  });
+}
+
 function buildEaseHist(cards) {
   // 0.1-wide buckets from 1.3 to 3.0.
   var min = 1.3;
@@ -918,6 +954,10 @@ function renderAll() {
   drawBarChart('chartEase', buildEaseHist(cards), {
     unit: 'cards',
     emptyId: 'emptyEase'
+  });
+  drawBarChart('chartTags', buildTopTags(cards, 15), {
+    unit: 'cards',
+    emptyId: 'emptyTags'
   });
 }
 
